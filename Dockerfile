@@ -93,7 +93,7 @@ RUN echo "=== Built-in LoRAs ===" && \
     -d /app/ComfyUI/models/loras
 
 # Copy handler
-COPY wan_handler_complete.py /app/wan_handler.py
+COPY wan_handler.py /app/wan_handler.py
 
 # Environment
 ENV PYTHONPATH="/app:/app/ComfyUI"
