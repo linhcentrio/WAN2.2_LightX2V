@@ -1,13 +1,13 @@
 # Core AI/ML (Compatible versions)
-torch>=2.6.0
-torchvision==0.21.0
+#torch>=2.6.0
+#torchvision==0.21.0
+#xformers==0.0.28.post3
 torchsde==0.2.6
 einops==0.8.0
 diffusers==0.32.2
 transformers==4.48.0
 accelerate==1.9.0
-xformers==0.0.28.post3
-triton==3.1.0
+#triton==3.1.0
 
 # ComfyUI dependencies  
 omegaconf==2.3.0
