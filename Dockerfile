@@ -119,7 +119,6 @@ RUN echo "=== Built-in LoRAs ===" && \
 
 # Copy application files
 COPY wan_handler.py /app/wan_handler.py
-COPY wan22_lightx2v.py /app/wan22_lightx2v.py
 
 # Environment variables
 ENV PYTHONPATH="/app:/app/ComfyUI:/app/Practical-RIFE"
