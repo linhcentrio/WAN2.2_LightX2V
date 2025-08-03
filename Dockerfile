@@ -19,9 +19,9 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -U \
     torch==2.6.0 \
-    torchvision==0.21.0 \
+    torchvision \
     torchaudio \
-    xformers==0.0.29.post2 \
+    xformers \
     --index-url https://download.pytorch.org/whl/cu126
 
 # Verify PyTorch installation
