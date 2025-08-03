@@ -1,4 +1,4 @@
-# WAN2.2 LightX2V Docker Image - Fixed Package Versions
+# WAN2.2 LightX2V Docker Image - Fixed Version
 FROM spxiong/pytorch:2.6.0-py3.10.16-cuda12.6.0-ubuntu22.04
 
 WORKDIR /app
@@ -7,6 +7,7 @@ WORKDIR /app
 ENV CUDA_VISIBLE_DEVICES=0
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -14,44 +15,61 @@ RUN apt-get update && apt-get install -y \
     build-essential python3.10-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# BƯỚC QUAN TRỌNG: Cài đặt PyTorch trước tiên
+# BƯỚC 1: Cài đặt PyTorch ecosystem với version fix
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -U torch==2.6.0 torchvision==0.21.0 torchaudio \
-    xformers==0.0.28.post3 --index-url https://download.pytorch.org/whl/cu126
+    pip install --no-cache-dir -U \
+    torch==2.6.0 \
+    torchvision==0.21.0 \
+    torchaudio \
+    xformers==0.0.29.post2 \
+    --index-url https://download.pytorch.org/whl/cu126
 
 # Verify PyTorch installation
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
 
-# Cài đặt Triton cho SageAttention
-RUN pip install --no-cache-dir triton==3.1.0
+# BƯỚC 2: Cài đặt Triton và SageAttention với version fix
+RUN pip install --no-cache-dir triton==3.2.0 && \
+    pip install --no-cache-dir sageattention || \
+    echo "⚠️ SageAttention installation failed, continuing without it"
 
-# Copy requirements và cài đặt dependencies cơ bản
+# BƯỚC 3: Copy requirements và cài đặt dependencies cơ bản
 COPY Requirements.txt .
 RUN pip install --no-cache-dir -r Requirements.txt
 
-# Cài đặt SageAttention từ source (sau khi đã có torch)
-RUN pip install --no-cache-dir git+https://github.com/thu-ml/SageAttention.git || \
-    echo "⚠️ SageAttention installation failed, continuing without it"
-
-# Clone ComfyUI
-RUN git clone --branch ComfyUI_v0.3.47 https://github.com/Isi-dev/ComfyUI /app/ComfyUI
-
-# Clone custom nodes
-RUN cd /app/ComfyUI/custom_nodes && \
+# BƯỚC 4: Clone ComfyUI và custom nodes
+RUN git clone --branch ComfyUI_v0.3.47 https://github.com/Isi-dev/ComfyUI /app/ComfyUI && \
+    cd /app/ComfyUI/custom_nodes && \
     git clone https://github.com/Isi-dev/ComfyUI_GGUF.git && \
     git clone --branch kjnv1.1.3 https://github.com/Isi-dev/ComfyUI_KJNodes.git
 
-# Install custom nodes requirements
+# BƯỚC 5: Install custom nodes requirements
 RUN cd /app/ComfyUI/custom_nodes/ComfyUI_GGUF && \
-    pip install -r requirements.txt --no-cache-dir || echo "⚠️ GGUF requirements failed" && \
+    pip install --no-cache-dir -r requirements.txt || echo "⚠️ GGUF requirements failed" && \
     cd /app/ComfyUI/custom_nodes/ComfyUI_KJNodes && \
-    pip install -r requirements.txt --no-cache-dir || echo "⚠️ KJNodes requirements failed"
+    pip install --no-cache-dir -r requirements.txt || echo "⚠️ KJNodes requirements failed"
 
-# Create directories
+# BƯỚC 6: Setup Practical-RIFE cho frame interpolation (thiếu trong dockerfile cũ)
+RUN git clone https://github.com/Isi-dev/Practical-RIFE /app/Practical-RIFE && \
+    cd /app/Practical-RIFE && \
+    pip install --no-cache-dir git+https://github.com/rk-exxec/scikit-video.git@numpy_deprecation && \
+    mkdir -p /app/Practical-RIFE/train_log
+
+# Download Practical-RIFE models
+RUN cd /app/Practical-RIFE && \
+    wget -q https://huggingface.co/Isi99999/Frame_Interpolation_Models/resolve/main/4.25/train_log/IFNet_HDv3.py \
+    -O /app/Practical-RIFE/train_log/IFNet_HDv3.py && \
+    wget -q https://huggingface.co/Isi99999/Frame_Interpolation_Models/resolve/main/4.25/train_log/RIFE_HDv3.py \
+    -O /app/Practical-RIFE/train_log/RIFE_HDv3.py && \
+    wget -q https://huggingface.co/Isi99999/Frame_Interpolation_Models/resolve/main/4.25/train_log/refine.py \
+    -O /app/Practical-RIFE/train_log/refine.py && \
+    wget -q https://huggingface.co/Isi99999/Frame_Interpolation_Models/resolve/main/4.25/train_log/flownet.pkl \
+    -O /app/Practical-RIFE/train_log/flownet.pkl
+
+# BƯỚC 7: Create directories
 RUN mkdir -p /app/ComfyUI/models/{diffusion_models,text_encoders,vae,clip_vision,loras} && \
     mkdir -p /app/ComfyUI/{input,output,temp}
 
-# Download Q6_K Models
+# BƯỚC 8: Download Q6_K Models
 RUN echo "=== Downloading Q6_K Models ===" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.2BasedModels/resolve/main/wan2.2_i2v_high_noise_14B_Q6_K.gguf" \
@@ -88,7 +106,7 @@ RUN echo "=== LightX2V LoRAs ===" && \
 RUN echo "=== Built-in LoRAs ===" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.1_14B-480p_I2V_LoRAs/resolve/main/walking%20to%20viewers_Wan.safetensors" \
-    -d /app/ComfyUI/models/loras -o "walking to viewers_Wan.safetensors" && \
+    -d /app/ComfyUI/models/loras -o "walking_to_viewers_Wan.safetensors" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.1_14B-480p_I2V_LoRAs/resolve/main/walking_from_behind.safetensors" \
     -d /app/ComfyUI/models/loras && \
@@ -96,25 +114,27 @@ RUN echo "=== Built-in LoRAs ===" && \
     "https://huggingface.co/Isi99999/Wan2.1_14B-480p_I2V_LoRAs/resolve/main/b3ll13-d8nc3r.safetensors" \
     -d /app/ComfyUI/models/loras && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
-    "https://huggingface.co/Isi99999/Wan2.1BasedModels/resolve/main/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors" \
-    -d /app/ComfyUI/models/loras && \
-    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Remade-AI/Rotate/resolve/main/rotate_20_epochs.safetensors" \
     -d /app/ComfyUI/models/loras
 
-# Copy handler
+# Copy application files
 COPY wan_handler.py /app/wan_handler.py
+COPY wan22_lightx2v.py /app/wan22_lightx2v.py
 
 # Environment variables
-ENV PYTHONPATH="/app:/app/ComfyUI"
+ENV PYTHONPATH="/app:/app/ComfyUI:/app/Practical-RIFE"
 
-# Verify installation
-RUN python -c "import torch, torchvision, transformers, diffusers, accelerate; print('✅ Core packages OK')" && \
-    python -c "import runpod, minio; print('✅ RunPod/MinIO OK')" || echo "⚠️ Some packages missing"
+# Final verification
+RUN python -c "import torch, torchvision, transformers, diffusers, accelerate, xformers; print('✅ Core packages OK')" && \
+    python -c "import runpod, minio; print('✅ RunPod/MinIO OK')" || echo "⚠️ Some packages missing" && \
+    python -c "import sageattention; print('✅ SageAttention OK')" || echo "⚠️ SageAttention not available"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=15s --start-period=300s --retries=3 \
     CMD python -c "import torch; assert torch.cuda.is_available(); print('🚀 Ready')" || exit 1
+
+# Expose port
+EXPOSE 8000
 
 # Run handler
 CMD ["python", "wan_handler.py"]
