@@ -14,90 +14,24 @@ RUN apt-get update && apt-get install -y \
     build-essential python3.10-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# BƯỚC QUAN TRỌNG: Cài đặt PyTorch trước tiên
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -U torch==2.6.0 torchvision==0.21.0 torchaudio \
+    xformers==0.0.28.post3 --index-url https://download.pytorch.org/whl/cu126
+
 # Verify PyTorch installation
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
 
-# Install AI/ML packages in stages to avoid conflicts
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    torchvision==0.21.0 \
-    torchsde==0.2.6 \
-    einops==0.8.0
+# Cài đặt Triton cho SageAttention
+RUN pip install --no-cache-dir triton==3.1.0
 
-# Install core ML libraries
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    diffusers==0.32.2 \
-    transformers==4.48.0 \
-    accelerate==1.9.0 \
-    safetensors==0.4.5
+# Copy requirements và cài đặt dependencies cơ bản
+COPY Requirements.txt .
+RUN pip install --no-cache-dir -r Requirements.txt
 
-# Install xformers compatible với PyTorch 2.6.0
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    xformers==0.0.28.post3
-
-# Install triton compatible version
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    triton==3.1.0
-
-# Install computer vision packages
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    av==12.3.0 \
-    opencv-python==4.10.0.84 \
-    pillow==10.4.0 \
-    imageio==2.36.0 \
-    imageio-ffmpeg==0.5.1
-
-# Install audio processing
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    soundfile==0.12.1
-
-# Install optional ML packages (non-critical)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    spandrel \
-    albumentations \
-    kornia==0.8.0 \
-    || echo "⚠️ Some optional packages failed to install"
-
-# Install specialized packages
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    insightface \
-    onnx \
-    segment_anything \
-    ultralytics \
-    || echo "⚠️ Some specialized packages failed to install"
-
-# Install onnxruntime-gpu
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    onnxruntime-gpu \
-    || pip install --no-cache-dir onnxruntime
-
-# Install sageattention (experimental)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    git+https://github.com/thu-ml/SageAttention.git \
-    || echo "⚠️ SageAttention installation failed, continuing without it"
-
-# Install configuration packages
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    omegaconf==2.3.0 \
-    tqdm==4.66.6 \
-    psutil==6.0.0
-
-# Install RunPod and storage
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir \
-    runpod>=1.7.0 \
-    minio>=7.2.0 \
-    huggingface-hub==0.30.2
+# Cài đặt SageAttention từ source (sau khi đã có torch)
+RUN pip install --no-cache-dir git+https://github.com/thu-ml/SageAttention.git || \
+    echo "⚠️ SageAttention installation failed, continuing without it"
 
 # Clone ComfyUI
 RUN git clone --branch ComfyUI_v0.3.47 https://github.com/Isi-dev/ComfyUI /app/ComfyUI
