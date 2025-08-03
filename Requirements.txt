@@ -1,22 +1,23 @@
-# Core AI/ML (Compatible versions)
-#torch>=2.6.0
-#torchvision==0.21.0
-#xformers==0.0.28.post3
+# Core PyTorch dependencies (sẽ được cài trong Dockerfile)
+# torch==2.6.0
+# torchvision==0.21.0
+# torchaudio>=2.6.0
+
+# Core ML/AI packages
 torchsde==0.2.6
 einops==0.8.0
 diffusers==0.32.2
 transformers==4.48.0
 accelerate==1.9.0
-#triton==3.1.0
 
-# ComfyUI dependencies  
+# ComfyUI dependencies
 omegaconf==2.3.0
 safetensors==0.4.5
 tqdm==4.66.6
 psutil==6.0.0
 kornia==0.8.0
 
-# Computer Vision
+# Computer Vision & Media
 av==12.3.0
 opencv-python==4.10.0.84
 pillow==10.4.0
@@ -32,6 +33,7 @@ insightface
 onnx
 segment_anything
 ultralytics
+onnxruntime
 onnxruntime-gpu
 
 # RunPod & Storage
@@ -42,6 +44,3 @@ huggingface-hub==0.30.2
 # Utilities
 requests>=2.32.0
 urllib3>=2.2.0
-
-triton
-sageattention
