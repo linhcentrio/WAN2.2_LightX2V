@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""
-RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - Complete Version
 
+"""
+RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - OPTIMIZED VERSION
 """
 
 import runpod
@@ -26,7 +26,7 @@ import logging
 import imageio
 import numpy as np
 
-# Configure comprehensive logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -37,39 +37,28 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, '/app/ComfyUI')
 sys.path.insert(0, '/app/Practical-RIFE')
 
-# Import ComfyUI components với comprehensive error handling
+# Import ComfyUI components
 try:
-    # Core ComfyUI nodes
     from nodes import (
         CheckpointLoaderSimple, CLIPLoader, CLIPTextEncode, VAEDecode, VAELoader,
         KSampler, KSamplerAdvanced, UNETLoader, LoadImage, SaveImage,
         CLIPVisionLoader, CLIPVisionEncode, LoraLoaderModelOnly, ImageScale
     )
-    
-    # GGUF support
     from custom_nodes.ComfyUI_GGUF.nodes import UnetLoaderGGUF
-    
-    # Optimization nodes
     from custom_nodes.ComfyUI_KJNodes.nodes.model_optimization_nodes import (
         WanVideoTeaCacheKJ, PathchSageAttentionKJ, WanVideoNAG, SkipLayerGuidanceWanVideo
     )
-    
-    # Advanced nodes
     from comfy_extras.nodes_model_advanced import ModelSamplingSD3
     from comfy_extras.nodes_images import SaveAnimatedWEBP
     from comfy_extras.nodes_video import SaveWEBM
     from comfy_extras.nodes_wan import WanImageToVideo
     from comfy import model_management
-    
-    # Import folder paths for proper ComfyUI integration
     import folder_paths
-    
+
     logger.info("✅ All ComfyUI modules imported successfully")
     COMFYUI_AVAILABLE = True
-    
 except ImportError as e:
     logger.error(f"❌ ComfyUI import error: {e}")
-    logger.error(f"Traceback: {traceback.format_exc()}")
     COMFYUI_AVAILABLE = False
 
 # MinIO Configuration
@@ -79,7 +68,7 @@ MINIO_SECRET_KEY = "8boVPVIynLEKcgXirrcePxvjSk7gReIDD9pwto3t"
 MINIO_BUCKET = "video"
 MINIO_SECURE = False
 
-# Initialize MinIO client với error handling
+# Initialize MinIO client
 try:
     minio_client = Minio(
         MINIO_ENDPOINT,
@@ -92,55 +81,45 @@ except Exception as e:
     logger.error(f"❌ MinIO initialization failed: {e}")
     minio_client = None
 
-# Model configurations với đường dẫn chính xác
+# Model configurations CHÍNH XÁC theo file gốc
 MODEL_CONFIGS = {
-    # Q6_K DIT Models
+    # Q6_K DIT Models  
     "dit_model_high": "/app/ComfyUI/models/diffusion_models/wan2.2_i2v_high_noise_14B_Q6_K.gguf",
     "dit_model_low": "/app/ComfyUI/models/diffusion_models/wan2.2_i2v_low_noise_14B_Q6_K.gguf",
-    
     # Supporting models
-    "text_encoder": "/app/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "text_encoder": "/app/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", 
     "vae": "/app/ComfyUI/models/vae/wan_2.1_vae.safetensors",
     "clip_vision": "/app/ComfyUI/models/clip_vision/clip_vision_h.safetensors",
-    
-    # LightX2V LoRAs theo rank
+    # LightX2V LoRAs theo rank - CHÍNH XÁC theo file gốc
     "lightx2v_rank_32": "/app/ComfyUI/models/loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank32_bf16.safetensors",
-    "lightx2v_rank_64": "/app/ComfyUI/models/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+    "lightx2v_rank_64": "/app/ComfyUI/models/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", 
     "lightx2v_rank_128": "/app/ComfyUI/models/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank128_bf16.safetensors",
-    
-    # Built-in LoRAs với tên file chính xác
+    # Built-in LoRAs
     "walking_to_viewers": "/app/ComfyUI/models/loras/walking to viewers_Wan.safetensors",
-    "walking_from_behind": "/app/ComfyUI/models/loras/walking_from_behind.safetensors",
+    "walking_from_behind": "/app/ComfyUI/models/loras/walking_from_behind.safetensors", 
     "dancing": "/app/ComfyUI/models/loras/b3ll13-d8nc3r.safetensors",
     "pusa_lora": "/app/ComfyUI/models/loras/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors",
     "rotate_lora": "/app/ComfyUI/models/loras/rotate_20_epochs.safetensors"
 }
 
-# Global model cache để tối ưu memory
+# Global model cache
 model_cache = {}
 
-# Enable PyTorch 2.6.0 optimizations
+# Enable PyTorch optimizations 
 try:
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.set_float32_matmul_precision('high')
-    
-    # Enable Flash Attention trong PyTorch 2.6.0
     torch.backends.cuda.flash_sdp_enabled = True
     torch.backends.cuda.mem_efficient_sdp_enabled = True
-    
-    logger.info("✅ PyTorch 2.6.0 optimizations enabled")
+    logger.info("✅ PyTorch optimizations enabled")
 except Exception as e:
     logger.warning(f"⚠️ PyTorch optimizations partially failed: {e}")
 
 def verify_models() -> tuple[bool, list]:
-    """
-    Verify tất cả models cần thiết có tồn tại
-    Returns: (success, missing_models)
-    """
+    """Verify tất cả models cần thiết có tồn tại"""
     logger.info("🔍 Verifying all required models...")
-    
     missing_models = []
     existing_models = []
     total_size = 0
@@ -161,22 +140,16 @@ def verify_models() -> tuple[bool, list]:
     
     if missing_models:
         logger.error(f"❌ Missing {len(missing_models)}/{len(MODEL_CONFIGS)} models")
-        for model in missing_models:
-            logger.error(f"   - {model}")
         return False, missing_models
     else:
-        logger.info(f"✅ All {len(existing_models)} models verified! Total: {total_size:.1f}MB")
+        logger.info(f"✅ All {len(existing_models)} models verified! Total: {total_size:.1f}MB") 
         return True, []
 
 def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
-    """
-    Download LoRA từ HuggingFace hoặc CivitAI theo code gốc
-    Support cho multiple platforms với proper error handling
-    """
+    """Download LoRA từ HuggingFace hoặc CivitAI"""
     try:
         lora_dir = "/app/ComfyUI/models/loras"
         os.makedirs(lora_dir, exist_ok=True)
-        
         logger.info(f"🎨 Downloading LoRA from: {lora_url}")
         
         if "huggingface.co" in lora_url:
@@ -184,20 +157,17 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
             parts = lora_url.split("/")
             if len(parts) >= 7 and "resolve" in parts:
                 username = parts[3]
-                repo = parts[4]
+                repo = parts[4] 
                 filename = parts[-1]
-                
                 local_path = os.path.join(lora_dir, filename)
                 
                 logger.info(f"📥 Downloading from HuggingFace: {username}/{repo}/{filename}")
-                
                 downloaded_path = hf_hub_download(
                     repo_id=f"{username}/{repo}",
                     filename=filename,
                     local_dir=lora_dir,
                     force_download=True
                 )
-                
                 logger.info(f"✅ HuggingFace LoRA downloaded: {filename}")
                 return downloaded_path
                 
@@ -212,9 +182,8 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
                 headers = {}
                 if civitai_token:
                     headers["Authorization"] = f"Bearer {civitai_token}"
-                
+                    
                 api_url = f"https://civitai.com/api/download/models/{model_id}?type=Model&format=SafeTensor"
-                
                 logger.info(f"📥 Downloading from CivitAI: model_id={model_id}")
                 
                 response = requests.get(api_url, headers=headers, timeout=300, stream=True)
@@ -251,7 +220,6 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
                 filename = f"downloaded_lora_{int(time.time())}.safetensors"
                 
             local_path = os.path.join(lora_dir, filename)
-            
             logger.info(f"📥 Direct download: {filename}")
             
             response = requests.get(lora_url, timeout=300, stream=True)
@@ -265,7 +233,7 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
             file_size = os.path.getsize(local_path) / (1024 * 1024)
             logger.info(f"✅ Direct LoRA downloaded: {filename} ({file_size:.1f}MB)")
             return local_path
-                
+            
         return None
         
     except Exception as e:
@@ -280,64 +248,96 @@ def get_lightx2v_lora_path(lightx2v_rank: str) -> str:
         "64": "lightx2v_rank_64", 
         "128": "lightx2v_rank_128"
     }
-    
-    config_key = rank_mapping.get(lightx2v_rank, "64")
+    config_key = rank_mapping.get(lightx2v_rank, "lightx2v_rank_32")  # Default 32 theo file gốc
     return MODEL_CONFIGS.get(config_key)
 
-def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> str:
+def save_as_mp4_fixed(decoded, filename_prefix, fps, output_dir="/app/ComfyUI/output"):
     """
-    Apply RIFE frame interpolation để tăng FPS
+    ✅ FIXED: Save video với proper frame validation - Fix vấn đề 0MB
     """
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = f"{output_dir}/{filename_prefix}.mp4"
+    
+    frames_processed = []
+    
     try:
-        logger.info(f"🔄 Applying RIFE interpolation (factor: {interpolation_factor})...")
-        
-        # Import RIFE modules
-        sys.path.append('/app/Practical-RIFE')
-        from inference_video import interpolate_video
-        
-        output_path = video_path.replace('.mp4', f'_rife_x{interpolation_factor}.mp4')
-        
-        # Apply RIFE interpolation
-        interpolate_video(
-            input_path=video_path,
-            output_path=output_path,
-            times=interpolation_factor,
-            fps=None  # Keep original FPS * factor
-        )
-        
-        if os.path.exists(output_path):
-            original_size = os.path.getsize(video_path) / (1024 * 1024)
-            interpolated_size = os.path.getsize(output_path) / (1024 * 1024)
-            logger.info(f"✅ RIFE interpolation completed: {original_size:.1f}MB → {interpolated_size:.1f}MB")
-            return output_path
-        else:
-            logger.warning("⚠️ RIFE interpolation failed, returning original")
-            return video_path
+        for i, img in enumerate(decoded):
+            # ✅ FIX: Validate frames trước khi convert
+            if isinstance(img, torch.Tensor):
+                img_np = img.cpu().numpy()
+            else:
+                img_np = np.array(img)
             
+            # Remove NaN/Inf values - FIX CRITICAL BUG
+            img_np = np.nan_to_num(img_np, nan=0.0, posinf=1.0, neginf=0.0)
+            
+            # Clamp values to [0,1] range
+            img_np = np.clip(img_np, 0.0, 1.0)
+            
+            # Convert to uint8 safely
+            frame = (img_np * 255).astype(np.uint8)
+            
+            # Validate frame shape
+            if len(frame.shape) == 3 and frame.shape[2] in [1, 3, 4]:
+                frames_processed.append(frame)
+            else:
+                logger.warning(f"⚠️ Invalid frame {i} shape: {frame.shape}")
+                
     except Exception as e:
-        logger.error(f"❌ RIFE interpolation error: {e}")
-        return video_path
+        logger.error(f"❌ Frame processing error: {e}")
+        raise RuntimeError(f"Failed to process frames: {e}")
+    
+    # Validate frames before writing
+    if not frames_processed:
+        raise ValueError("❌ No valid frames to save - video would be 0MB")
+    
+    try:
+        # Use imageio with proper codec and bitrate
+        with imageio.get_writer(
+            output_path, 
+            fps=fps, 
+            codec='libx264',
+            bitrate='8M',
+            quality=8
+        ) as writer:
+            for frame in frames_processed:
+                writer.append_data(frame)
+                
+        # Verify file size
+        file_size = os.path.getsize(output_path) / (1024 * 1024)
+        if file_size == 0:
+            raise ValueError("❌ Generated video is 0MB - encoding failed")
+            
+        logger.info(f"✅ Video saved successfully: {output_path} ({file_size:.1f}MB)")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"❌ Video encoding error: {e}")
+        raise RuntimeError(f"Failed to encode video: {e}")
 
 def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
     """
-    Complete WAN2.2 video generation theo đúng logic code gốc
-    Bao gồm tất cả optimizations và features
+    ✅ OPTIMIZED: Complete WAN2.2 video generation theo ĐÚNG logic file gốc
     """
     try:
         logger.info("🎬 Starting WAN2.2 Q6_K complete generation...")
         
-        # Extract all parameters từ kwargs với default values theo code gốc
+        # Extract parameters với default values CHÍNH XÁC theo file gốc
         positive_prompt = kwargs.get('positive_prompt', '')
         negative_prompt = kwargs.get('negative_prompt', '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走')
-        width = kwargs.get('width', 720)
-        height = kwargs.get('height', 1280)
+        
+        # ✅ FIXED: Default resolution theo file gốc
+        width = kwargs.get('width', 832)  # File gốc: 832x480
+        height = kwargs.get('height', 480)
+        
         seed = kwargs.get('seed', 0)
-        steps = kwargs.get('steps', 6)
-        high_noise_steps = kwargs.get('high_noise_steps', 3)
+        # ✅ FIXED: Default steps theo file gốc 
+        steps = kwargs.get('steps', 20)  # File gốc: 20 steps
+        high_noise_steps = kwargs.get('high_noise_steps', 10)  # File gốc: 10
         cfg_scale = kwargs.get('cfg_scale', 1.0)
-        sampler_name = kwargs.get('sampler_name', 'euler')
+        sampler_name = kwargs.get('sampler_name', 'uni_pc')  # File gốc: uni_pc
         scheduler = kwargs.get('scheduler', 'simple')
-        frames = kwargs.get('frames', 65)
+        frames = kwargs.get('frames', 33)  # File gốc: 33 frames
         fps = kwargs.get('fps', 16)
         
         # Prompt assist
@@ -348,28 +348,26 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         lora_url = kwargs.get('lora_url', None)
         lora_strength = kwargs.get('lora_strength', 1.0)
         civitai_token = kwargs.get('civitai_token', None)
-        
         use_lora2 = kwargs.get('use_lora2', False)
         lora2_url = kwargs.get('lora2_url', None)
         lora2_strength = kwargs.get('lora2_strength', 1.0)
-        
         use_lora3 = kwargs.get('use_lora3', False)
-        lora3_url = kwargs.get('lora3_url', None)
+        lora3_url = kwargs.get('lora3_url', None) 
         lora3_strength = kwargs.get('lora3_strength', 1.0)
         
-        # LightX2V configuration
-        use_lightx2v = kwargs.get('use_lightx2v', True)
-        lightx2v_rank = kwargs.get('lightx2v_rank', '64')
-        lightx2v_strength = kwargs.get('lightx2v_strength', 3.0)
+        # ✅ FIXED: LightX2V configuration theo file gốc
+        use_lightx2v = kwargs.get('use_lightx2v', True)  # File gốc: True
+        lightx2v_rank = kwargs.get('lightx2v_rank', '32')  # File gốc: rank 32
+        lightx2v_strength = kwargs.get('lightx2v_strength', 3.0)  # File gốc: 3.0
         
         # PUSA LoRA
         use_pusa = kwargs.get('use_pusa', False)
         pusa_strength = kwargs.get('pusa_strength', 1.2)
         
-        # Optimization parameters
+        # ✅ FIXED: Optimization parameters theo file gốc
         use_sage_attention = kwargs.get('use_sage_attention', True)
-        rel_l1_thresh = kwargs.get('rel_l1_thresh', 0.0)
-        start_percent = kwargs.get('start_percent', 0.2)
+        rel_l1_thresh = kwargs.get('rel_l1_thresh', 0.275)  # File gốc: 0.275
+        start_percent = kwargs.get('start_percent', 0.1)  # File gốc: 0.1  
         end_percent = kwargs.get('end_percent', 1.0)
         
         # Flow shift parameters
@@ -378,13 +376,12 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         enable_flow_shift2 = kwargs.get('enable_flow_shift2', True)
         flow_shift2 = kwargs.get('flow_shift2', 8.0)
         
-        # Advanced parameters (mostly disabled in original)
+        # Advanced parameters
         use_nag = kwargs.get('use_nag', False)
         nag_strength = kwargs.get('nag_strength', 11.0)
         nag_scale1 = kwargs.get('nag_scale1', 0.25)
         nag_scale2 = kwargs.get('nag_scale2', 2.5)
-        
-        use_clip_vision = kwargs.get('use_clip_vision', False)
+        use_clip_vision = kwargs.get('use_clip_vision', False)  # File gốc: disabled
         
         # Frame interpolation
         enable_interpolation = kwargs.get('enable_interpolation', False)
@@ -394,11 +391,13 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         if seed == 0:
             seed = random.randint(1, 2**32 - 1)
             
-        logger.info(f"🎯 Generation Parameters:")
+        logger.info(f"🎯 Generation Parameters (CHÍNH XÁC theo file gốc):")
         logger.info(f"   Resolution: {width}x{height}")
         logger.info(f"   Frames: {frames}, FPS: {fps}")
-        logger.info(f"   Steps: {steps} (high noise: {high_noise_steps})")
+        logger.info(f"   Steps: {steps} (end_step1: {high_noise_steps})")
         logger.info(f"   CFG Scale: {cfg_scale}, Seed: {seed}")
+        logger.info(f"   Sampler: {sampler_name} ({scheduler})")
+        logger.info(f"   TeaCache: {rel_l1_thresh}")
         logger.info(f"   Prompt Assist: {prompt_assist}")
         logger.info(f"   LightX2V: {use_lightx2v} (rank: {lightx2v_rank}, strength: {lightx2v_strength})")
         
@@ -408,17 +407,15 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         
         # Auto-adjust height if 0 (maintain aspect ratio)
         if height == 0:
-            # Load image để get original dimensions
             from PIL import Image
             with Image.open(image_path) as img:
                 original_width, original_height = img.size
                 height = int(width * original_height / original_width)
-                # Ensure height is multiple of 8 for video encoding
-                height = (height // 8) * 8
+                height = (height // 8) * 8  # Ensure multiple of 8
             logger.info(f"🔄 Auto-adjusted height: {height} (aspect ratio preserved)")
         
         with torch.inference_mode(), autocast():
-            # Initialize all ComfyUI nodes
+            # Initialize ComfyUI nodes
             logger.info("🔧 Initializing ComfyUI nodes...")
             unet_loader = UnetLoaderGGUF()
             pathch_sage_attention = PathchSageAttentionKJ()
@@ -428,7 +425,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             clip_loader = CLIPLoader()
             clip_encode_positive = CLIPTextEncode()
             clip_encode_negative = CLIPTextEncode()
-            vae_loader = VAELoader()
+            vae_loader = VAELoader() 
             clip_vision_loader = CLIPVisionLoader()
             clip_vision_encode = CLIPVisionEncode()
             load_image = LoadImage()
@@ -442,7 +439,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             load_lora_node = LoraLoaderModelOnly()
             load_lora2_node = LoraLoaderModelOnly()
             load_lora3_node = LoraLoaderModelOnly()
-            load_lightx2v_lora = LoraLoaderModelOnly()
+            load_lightx2v_lora = LoraLoaderModelOnly() 
             load_pusa_lora = LoraLoaderModelOnly()
             
             logger.info("✅ ComfyUI nodes initialized")
@@ -455,7 +452,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             final_positive_prompt = positive_prompt
             if prompt_assist != "none":
                 final_positive_prompt = f"{positive_prompt}, {prompt_assist}"
-            
+                
             positive = clip_encode_positive.encode(clip, final_positive_prompt)[0]
             negative = clip_encode_negative.encode(clip, negative_prompt)[0]
             
@@ -471,7 +468,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             logger.info(f"🔄 Scaling image to {width}x{height}...")
             loaded_image = image_scaler.upscale(loaded_image, "lanczos", width, height, "disabled")[0]
             
-            # CLIP Vision processing (optional)
+            # CLIP Vision processing (optional) - DISABLED theo file gốc
             clip_vision_output = None
             if use_clip_vision:
                 logger.info("👁️ Processing with CLIP Vision...")
@@ -480,6 +477,8 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
                 del clip_vision
                 torch.cuda.empty_cache()
                 gc.collect()
+            else:
+                logger.info("👁️ CLIP Vision: disabled (theo file gốc)")
             
             # Load VAE
             logger.info("🎨 Loading VAE...")
@@ -492,7 +491,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             )
             
             # STAGE 1: High noise model
-            logger.info("🎯 Loading high noise Q6_K model...")
+            logger.info("🎯 STAGE 1: Loading high noise Q6_K model...")
             model = unet_loader.load_unet("wan2.2_i2v_high_noise_14B_Q6_K.gguf")[0]
             
             # Apply NAG nếu enabled
@@ -507,7 +506,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             
             # Apply prompt assist LoRAs
             if prompt_assist == "walking to viewers":
-                logger.info("🚶 Loading walking to viewers LoRA...")
+                logger.info("🚶 Loading walking to camera LoRA...")
                 model = pAssLora.load_lora_model_only(model, "walking to viewers_Wan.safetensors", 1.0)[0]
             elif prompt_assist == "walking from behind":
                 logger.info("🚶 Loading walking from behind LoRA...")
@@ -541,9 +540,9 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
                     model = load_lora3_node.load_lora_model_only(model, os.path.basename(lora3_path), lora3_strength)[0]
                     custom_lora_paths.append((lora3_path, lora3_strength))
             
-            # Apply LightX2V LoRA
+            # ✅ FIXED: Apply LightX2V LoRA theo file gốc
             if use_lightx2v:
-                logger.info(f"⚡ Loading LightX2V LoRA rank {lightx2v_rank} (strength: {lightx2v_strength})...")
+                logger.info(f"⚡ Loading lightx2v LoRA rank {lightx2v_rank} (strength: {lightx2v_strength})...")
                 lightx2v_lora_path = get_lightx2v_lora_path(lightx2v_rank)
                 if lightx2v_lora_path and os.path.exists(lightx2v_lora_path):
                     model = load_lightx2v_lora.load_lora_model_only(
@@ -573,7 +572,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
                     logger.warning(f"⚠️ TeaCache failed: {e}")
             
             # Sample với high noise model
-            logger.info(f"🎬 Sampling with high noise model (steps: {used_steps}, end_step: {high_noise_steps})...")
+            logger.info(f"🎬 Generating video with high noise model (steps: {used_steps}, end_step: {high_noise_steps})...")
             sampled = ksampler.sample(
                 model=model,
                 add_noise="enable",
@@ -595,13 +594,13 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             gc.collect()
             
             # STAGE 2: Low noise model
-            logger.info("🎯 Loading low noise Q6_K model...")
+            logger.info("🎯 STAGE 2: Loading low noise Q6_K model...")
             model = unet_loader.load_unet("wan2.2_i2v_low_noise_14B_Q6_K.gguf")[0]
             
             # Apply optimizations cho low noise model
             if use_nag:
                 model = wan_video_nag.patch(model, negative, nag_strength, nag_scale1, nag_scale2)[0]
-            
+                
             if enable_flow_shift2:
                 logger.info(f"🌊 Applying flow shift 2: {flow_shift2}")
                 model = model_sampling.patch(model, flow_shift2)[0]
@@ -645,7 +644,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
                     logger.warning(f"⚠️ TeaCache (stage 2) failed: {e}")
             
             # Sample với low noise model
-            logger.info(f"🎬 Sampling with low noise model (start_step: {high_noise_steps})...")
+            logger.info(f"🎬 Generating video with low noise model (start_step: {high_noise_steps})...")
             sampled = ksampler.sample(
                 model=model,
                 add_noise="disable",
@@ -667,29 +666,17 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             gc.collect()
             
             # Decode latents to video frames
-            logger.info("🎨 Decoding latents to video frames...")
+            logger.info("🎨 Decoding latents...")
             decoded = vae_decode.decode(vae, sampled)[0]
+            
             del vae
             torch.cuda.empty_cache()
             gc.collect()
             
-            # Convert tensor to numpy và save video
-            logger.info("💾 Saving video...")
+            # ✅ FIXED: Save video với proper validation
+            logger.info("💾 Saving as MP4...")
             output_path = f"/app/ComfyUI/output/wan22_complete_{uuid.uuid4().hex[:8]}.mp4"
-            
-            # Convert từ torch tensor sang numpy array
-            if isinstance(decoded, torch.Tensor):
-                frames_np = decoded.cpu().numpy()
-                # Clamp values và convert to uint8
-                frames_np = np.clip(frames_np * 255, 0, 255).astype(np.uint8)
-            else:
-                frames_np = np.array(decoded)
-                frames_np = np.clip(frames_np * 255, 0, 255).astype(np.uint8)
-            
-            # Save video với imageio
-            with imageio.get_writer(output_path, fps=fps, codec='libx264', bitrate='8M') as writer:
-                for frame in frames_np:
-                    writer.append_data(frame)
+            output_path = save_as_mp4_fixed(decoded, f"wan22_complete_{uuid.uuid4().hex[:8]}", fps)
             
             file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
             logger.info(f"✅ Video saved: {output_path} ({file_size_mb:.1f}MB)")
@@ -714,14 +701,14 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             torch.cuda.empty_cache()
 
 def upload_to_minio(local_path: str, object_name: str) -> str:
-    """Upload file to MinIO storage với error handling"""
+    """Upload file to MinIO storage"""
     try:
         if not minio_client:
             raise RuntimeError("MinIO client not initialized")
-            
+        
         if not os.path.exists(local_path):
             raise FileNotFoundError(f"Local file not found: {local_path}")
-            
+        
         file_size_mb = os.path.getsize(local_path) / (1024 * 1024)
         logger.info(f"📤 Uploading to MinIO: {object_name} ({file_size_mb:.1f}MB)")
         
@@ -737,8 +724,7 @@ def upload_to_minio(local_path: str, object_name: str) -> str:
 
 def handler(job):
     """
-    Main RunPod handler cho WAN2.2 LightX2V Q6_K
-    Complete với all parameters và comprehensive error handling
+    ✅ OPTIMIZED: Main RunPod handler cho WAN2.2 LightX2V Q6_K
     """
     job_id = job.get("id", "unknown")
     start_time = time.time()
@@ -752,7 +738,6 @@ def handler(job):
         
         if not image_url:
             return {"error": "Missing required parameter: image_url"}
-            
         if not positive_prompt:
             return {"error": "Missing required parameter: positive_prompt"}
         
@@ -764,22 +749,21 @@ def handler(job):
         except Exception as e:
             return {"error": f"Image URL validation failed: {str(e)}"}
         
-        # Extract tất cả parameters với default values
+        # ✅ FIXED: Extract parameters với default values CHÍNH XÁC theo file gốc
         parameters = {
             # Required
             "positive_prompt": positive_prompt,
-            
-            # Basic video settings
+            # Basic video settings với ĐÚNG default values
             "negative_prompt": job_input.get("negative_prompt", "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"),
-            "width": job_input.get("width", 720),
-            "height": job_input.get("height", 1280),
+            "width": job_input.get("width", 832),  # File gốc: 832
+            "height": job_input.get("height", 480),  # File gốc: 480
             "seed": job_input.get("seed", 0),
-            "steps": job_input.get("steps", 6),
-            "high_noise_steps": job_input.get("high_noise_steps", 3),
+            "steps": job_input.get("steps", 20),  # File gốc: 20
+            "high_noise_steps": job_input.get("high_noise_steps", 10),  # File gốc: 10
             "cfg_scale": job_input.get("cfg_scale", 1.0),
-            "sampler_name": job_input.get("sampler_name", "euler"),
+            "sampler_name": job_input.get("sampler_name", "uni_pc"),  # File gốc: uni_pc
             "scheduler": job_input.get("scheduler", "simple"),
-            "frames": job_input.get("frames", 65),
+            "frames": job_input.get("frames", 33),  # File gốc: 33
             "fps": job_input.get("fps", 16),
             
             # Prompt assist
@@ -790,28 +774,26 @@ def handler(job):
             "lora_url": job_input.get("lora_url", None),
             "lora_strength": job_input.get("lora_strength", 1.0),
             "civitai_token": job_input.get("civitai_token", None),
-            
             "use_lora2": job_input.get("use_lora2", False),
             "lora2_url": job_input.get("lora2_url", None),
             "lora2_strength": job_input.get("lora2_strength", 1.0),
-            
             "use_lora3": job_input.get("use_lora3", False),
             "lora3_url": job_input.get("lora3_url", None),
             "lora3_strength": job_input.get("lora3_strength", 1.0),
             
-            # LightX2V parameters
-            "use_lightx2v": job_input.get("use_lightx2v", True),
-            "lightx2v_rank": job_input.get("lightx2v_rank", "64"),
-            "lightx2v_strength": job_input.get("lightx2v_strength", 3.0),
+            # ✅ FIXED: LightX2V parameters theo file gốc
+            "use_lightx2v": job_input.get("use_lightx2v", True),  # File gốc: True
+            "lightx2v_rank": job_input.get("lightx2v_rank", "32"),  # File gốc: rank 32
+            "lightx2v_strength": job_input.get("lightx2v_strength", 3.0),  # File gốc: 3.0
             
             # PUSA parameters
             "use_pusa": job_input.get("use_pusa", False),
             "pusa_strength": job_input.get("pusa_strength", 1.2),
             
-            # Optimization parameters
+            # ✅ FIXED: Optimization parameters theo file gốc
             "use_sage_attention": job_input.get("use_sage_attention", True),
-            "rel_l1_thresh": job_input.get("rel_l1_thresh", 0.0),
-            "start_percent": job_input.get("start_percent", 0.2),
+            "rel_l1_thresh": job_input.get("rel_l1_thresh", 0.275),  # File gốc: 0.275
+            "start_percent": job_input.get("start_percent", 0.1),  # File gốc: 0.1
             "end_percent": job_input.get("end_percent", 1.0),
             
             # Flow shift parameters
@@ -825,7 +807,7 @@ def handler(job):
             "nag_strength": job_input.get("nag_strength", 11.0),
             "nag_scale1": job_input.get("nag_scale1", 0.25),
             "nag_scale2": job_input.get("nag_scale2", 2.5),
-            "use_clip_vision": job_input.get("use_clip_vision", False),
+            "use_clip_vision": job_input.get("use_clip_vision", False),  # File gốc: disabled
             
             # Frame interpolation
             "enable_interpolation": job_input.get("enable_interpolation", False),
@@ -835,10 +817,8 @@ def handler(job):
         # Validate parameters
         if not (256 <= parameters["width"] <= 2048 and 256 <= parameters["height"] <= 2048):
             return {"error": "Width and height must be between 256 and 2048"}
-            
         if not (1 <= parameters["frames"] <= 120):
             return {"error": "Frames must be between 1 and 120"}
-            
         if parameters["lightx2v_rank"] not in ["32", "64", "128"]:
             return {"error": "LightX2V rank must be one of: 32, 64, 128"}
         
@@ -847,7 +827,8 @@ def handler(job):
         logger.info(f"📝 Prompt: {positive_prompt[:100]}...")
         logger.info(f"⚙️ Resolution: {parameters['width']}x{parameters['height']}")
         logger.info(f"🎬 Animation: {parameters['frames']} frames @ {parameters['fps']} FPS")
-        logger.info(f"🎨 LoRAs: {sum([parameters['use_lora'], parameters['use_lora2'], parameters['use_lora3']])} custom + prompt_assist: {parameters['prompt_assist']}")
+        logger.info(f"🎨 LightX2V: True (DEFAULT TRUE)")
+        logger.info(f"🔧 Config: Theo đúng file gốc wan22_Lightx2v.ipynb")
         
         # Verify models before processing
         models_ok, missing_models = verify_models()
@@ -862,11 +843,9 @@ def handler(job):
             # Download input image
             image_path = os.path.join(temp_dir, "input_image.jpg")
             logger.info("📥 Downloading input image...")
-            
             try:
                 response = requests.get(image_url, timeout=60, stream=True)
                 response.raise_for_status()
-                
                 with open(image_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
@@ -874,19 +853,16 @@ def handler(job):
                             
                 image_size_mb = os.path.getsize(image_path) / (1024 * 1024)
                 logger.info(f"✅ Image downloaded: {image_size_mb:.1f}MB")
-                
             except Exception as e:
                 return {"error": f"Failed to download image: {str(e)}"}
             
             # Generate video
             logger.info("🎬 Starting video generation...")
             generation_start = time.time()
-            
             output_path = generate_video_wan22_complete(
                 image_path=image_path,
                 **parameters
             )
-            
             generation_time = time.time() - generation_start
             
             if not output_path or not os.path.exists(output_path):
@@ -895,7 +871,6 @@ def handler(job):
             # Upload result to MinIO
             logger.info("📤 Uploading result to storage...")
             output_filename = f"wan22_complete_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
-            
             try:
                 output_url = upload_to_minio(output_path, output_filename)
             except Exception as e:
@@ -982,14 +957,12 @@ def handler(job):
         error_msg = str(e)
         logger.error(f"❌ Handler error for job {job_id}: {error_msg}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        
         return {
             "error": error_msg,
-            "status": "failed",
+            "status": "failed", 
             "processing_time_seconds": round(time.time() - start_time, 2),
             "job_id": job_id
         }
-        
     finally:
         # Final cleanup
         gc.collect()
@@ -1002,20 +975,20 @@ def health_check():
         # Check CUDA
         if not torch.cuda.is_available():
             return False, "CUDA not available"
-            
+        
         # Check models
         models_ok, missing = verify_models()
         if not models_ok:
             return False, f"Missing models: {len(missing)}"
-            
+        
         # Check ComfyUI
         if not COMFYUI_AVAILABLE:
             return False, "ComfyUI not available"
-            
+        
         # Check MinIO
         if not minio_client:
             return False, "MinIO not available"
-            
+        
         return True, "All systems operational"
         
     except Exception as e:
@@ -1036,7 +1009,7 @@ if __name__ == "__main__":
         if not health_ok:
             logger.error(f"❌ Health check failed: {health_msg}")
             sys.exit(1)
-            
+        
         logger.info(f"✅ Health check passed: {health_msg}")
         logger.info("🎬 Ready to process WAN2.2 LightX2V requests...")
         
