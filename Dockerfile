@@ -42,7 +42,7 @@ RUN git clone --branch ComfyUI_v0.3.47 https://github.com/Isi-dev/ComfyUI /app/C
     git clone https://github.com/Isi-dev/ComfyUI_GGUF.git && \
     git clone --branch kjnv1.1.3 https://github.com/Isi-dev/ComfyUI_KJNodes.git
 
-# BƯỚC 5: Install custom nodes requirements
+# BƯỚC 5: Install custom nodes requirements với error handling
 RUN cd /app/ComfyUI/custom_nodes/ComfyUI_GGUF && \
     pip install --no-cache-dir -r requirements.txt || echo "⚠️ GGUF requirements failed" && \
     cd /app/ComfyUI/custom_nodes/ComfyUI_KJNodes && \
@@ -65,20 +65,23 @@ RUN cd /app/Practical-RIFE && \
     wget -q https://huggingface.co/Isi99999/Frame_Interpolation_Models/resolve/main/4.25/train_log/flownet.pkl \
     -O /app/Practical-RIFE/train_log/flownet.pkl
 
-# BƯỚC 7: Create directories
+# BƯỚC 7: Create directories VÀ verify structure
 RUN mkdir -p /app/ComfyUI/models/{diffusion_models,text_encoders,vae,clip_vision,loras} && \
-    mkdir -p /app/ComfyUI/{input,output,temp}
+    mkdir -p /app/ComfyUI/{input,output,temp} && \
+    ls -la /app/ComfyUI/models/
 
-# BƯỚC 8: Download Q6_K Models
+# BƯỚC 8: Download Q6_K Models với verification
 RUN echo "=== Downloading Q6_K Models ===" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.2BasedModels/resolve/main/wan2.2_i2v_high_noise_14B_Q6_K.gguf" \
     -d /app/ComfyUI/models/diffusion_models && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.2BasedModels/resolve/main/wan2.2_i2v_low_noise_14B_Q6_K.gguf" \
-    -d /app/ComfyUI/models/diffusion_models
+    -d /app/ComfyUI/models/diffusion_models && \
+    echo "✅ Q6_K Models downloaded. Verifying..." && \
+    ls -la /app/ComfyUI/models/diffusion_models/
 
-# Download supporting models
+# Download supporting models với verification
 RUN echo "=== Supporting Models ===" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
@@ -88,9 +91,13 @@ RUN echo "=== Supporting Models ===" && \
     -d /app/ComfyUI/models/vae && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors" \
-    -d /app/ComfyUI/models/clip_vision
+    -d /app/ComfyUI/models/clip_vision && \
+    echo "✅ Supporting models downloaded. Verifying..." && \
+    ls -la /app/ComfyUI/models/text_encoders/ && \
+    ls -la /app/ComfyUI/models/vae/ && \
+    ls -la /app/ComfyUI/models/clip_vision/
 
-# Download LightX2V LoRAs
+# Download LightX2V LoRAs với verification
 RUN echo "=== LightX2V LoRAs ===" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.1BasedModels/resolve/main/lightx2v_I2V_14B_480p_cfg_step_distill_rank32_bf16.safetensors" \
@@ -100,13 +107,16 @@ RUN echo "=== LightX2V LoRAs ===" && \
     -d /app/ComfyUI/models/loras && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.1BasedModels/resolve/main/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank128_bf16.safetensors" \
-    -d /app/ComfyUI/models/loras
+    -d /app/ComfyUI/models/loras && \
+    echo "✅ LightX2V LoRAs downloaded. Verifying..." && \
+    ls -la /app/ComfyUI/models/loras/
 
-# Download built-in LoRAs
+# Download built-in LoRAs với tên file CHÍNH XÁC
 RUN echo "=== Built-in LoRAs ===" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.1_14B-480p_I2V_LoRAs/resolve/main/walking%20to%20viewers_Wan.safetensors" \
-    -d /app/ComfyUI/models/loras -o "walking_to_viewers_Wan.safetensors" && \
+    -d /app/ComfyUI/models/loras \
+    -o "walking to viewers_Wan.safetensors" && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Isi99999/Wan2.1_14B-480p_I2V_LoRAs/resolve/main/walking_from_behind.safetensors" \
     -d /app/ComfyUI/models/loras && \
@@ -114,8 +124,27 @@ RUN echo "=== Built-in LoRAs ===" && \
     "https://huggingface.co/Isi99999/Wan2.1_14B-480p_I2V_LoRAs/resolve/main/b3ll13-d8nc3r.safetensors" \
     -d /app/ComfyUI/models/loras && \
     aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
+    "https://huggingface.co/Isi99999/Wan2.1BasedModels/resolve/main/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors" \
+    -d /app/ComfyUI/models/loras && \
+    aria2c --console-log-level=error -c -x 16 -s 16 -k 1M \
     "https://huggingface.co/Remade-AI/Rotate/resolve/main/rotate_20_epochs.safetensors" \
-    -d /app/ComfyUI/models/loras
+    -d /app/ComfyUI/models/loras && \
+    echo "✅ Built-in LoRAs downloaded. Verifying..." && \
+    ls -la /app/ComfyUI/models/loras/
+
+# VERIFICATION STEP - Check tất cả models có đầy đủ
+RUN echo "=== FINAL VERIFICATION ===" && \
+    echo "Checking DIT models..." && \
+    test -f /app/ComfyUI/models/diffusion_models/wan2.2_i2v_high_noise_14B_Q6_K.gguf && echo "✅ High noise model OK" || echo "❌ High noise model MISSING" && \
+    test -f /app/ComfyUI/models/diffusion_models/wan2.2_i2v_low_noise_14B_Q6_K.gguf && echo "✅ Low noise model OK" || echo "❌ Low noise model MISSING" && \
+    echo "Checking supporting models..." && \
+    test -f /app/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors && echo "✅ Text encoder OK" || echo "❌ Text encoder MISSING" && \
+    test -f /app/ComfyUI/models/vae/wan_2.1_vae.safetensors && echo "✅ VAE OK" || echo "❌ VAE MISSING" && \
+    test -f /app/ComfyUI/models/clip_vision/clip_vision_h.safetensors && echo "✅ CLIP Vision OK" || echo "❌ CLIP Vision MISSING" && \
+    echo "Checking LoRAs..." && \
+    test -f "/app/ComfyUI/models/loras/walking to viewers_Wan.safetensors" && echo "✅ Walking to viewers OK" || echo "❌ Walking to viewers MISSING" && \
+    test -f /app/ComfyUI/models/loras/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors && echo "✅ PUSA LoRA OK" || echo "❌ PUSA LoRA MISSING" && \
+    echo "=== VERIFICATION COMPLETE ==="
 
 # Copy application files
 COPY wan_handler.py /app/wan_handler.py
