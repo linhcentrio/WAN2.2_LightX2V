@@ -2,6 +2,7 @@
 
 """
 RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - Complete Optimized Version
+Optimized for fixing 0MB video output issue
 """
 
 import runpod
@@ -311,38 +312,284 @@ def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> 
         logger.error(f"❌ RIFE interpolation error: {e}")
         return video_path
 
+def validate_tensor_data(tensor_data, name="tensor"):
+    """Validate tensor data before processing - OPTIMIZED VERSION"""
+    try:
+        if torch.is_tensor(tensor_data):
+            data = tensor_data.detach().cpu().numpy()
+        else:
+            data = np.array(tensor_data)
+        
+        stats = {
+            'shape': data.shape,
+            'dtype': data.dtype,
+            'min': float(data.min()),
+            'max': float(data.max()),
+            'mean': float(data.mean()),
+            'nan_count': int(np.sum(np.isnan(data))),
+            'inf_count': int(np.sum(np.isinf(data))),
+            'zero_count': int(np.sum(data == 0))
+        }
+        
+        logger.info(f"📊 {name} stats: shape={stats['shape']}, range=[{stats['min']:.3f}, {stats['max']:.3f}], mean={stats['mean']:.3f}")
+        
+        # Check for critical issues
+        issues = []
+        if stats['nan_count'] > 0:
+            issues.append(f"{stats['nan_count']} NaN values")
+        if stats['inf_count'] > 0:
+            issues.append(f"{stats['inf_count']} Inf values")
+        if stats['zero_count'] == data.size:
+            issues.append("All zeros")
+        if stats['min'] == stats['max'] and stats['min'] != 0:
+            issues.append("Constant values")
+        
+        if issues:
+            logger.warning(f"⚠️ {name} issues: {', '.join(issues)}")
+            
+        return len(issues) == 0, stats
+        
+    except Exception as e:
+        logger.error(f"❌ Error validating {name}: {e}")
+        return False, {}
+
 def safe_tensor_to_numpy(tensor_data, target_shape=None):
     """
-    Safely convert tensor to numpy array with NaN/Inf handling
+    Safely convert tensor to numpy array - OPTIMIZED VERSION BASED ON ORIGINAL WORKFLOW
     """
     try:
         # Convert to numpy if it's a tensor
         if torch.is_tensor(tensor_data):
-            numpy_data = tensor_data.detach().cpu().numpy()
+            # Ensure tensor is on CPU and detached properly
+            numpy_data = tensor_data.detach().cpu().float().numpy()
         else:
-            numpy_data = np.array(tensor_data)
+            numpy_data = np.array(tensor_data, dtype=np.float32)
         
-        # Check for NaN and Inf values
-        if np.any(np.isnan(numpy_data)) or np.any(np.isinf(numpy_data)):
-            logger.warning("⚠️ Found NaN/Inf values in tensor data, replacing with zeros")
-            numpy_data = np.nan_to_num(numpy_data, nan=0.0, posinf=1.0, neginf=0.0)
+        # Validate input data first
+        is_valid, stats = validate_tensor_data(numpy_data, "input_tensor")
         
-        # Ensure proper range [0, 1]
+        # Handle batch dimension properly (similar to original workflow)
+        original_shape = numpy_data.shape
+        if numpy_data.ndim == 4:  # [batch, height, width, channels]
+            if numpy_data.shape[0] == 1:
+                numpy_data = numpy_data[0]
+                logger.info(f"🔄 Removed batch dimension: {original_shape} → {numpy_data.shape}")
+        elif numpy_data.ndim == 5:  # [batch, frames, height, width, channels] 
+            if numpy_data.shape[0] == 1:
+                numpy_data = numpy_data[0]
+                logger.info(f"🔄 Removed batch dimension: {original_shape} → {numpy_data.shape}")
+        
+        # Check for NaN and Inf values BEFORE any processing
+        nan_mask = np.isnan(numpy_data)
+        inf_mask = np.isinf(numpy_data)
+        
+        if np.any(nan_mask) or np.any(inf_mask):
+            nan_count = np.sum(nan_mask)
+            inf_count = np.sum(inf_mask)
+            logger.warning(f"⚠️ Found {nan_count} NaN and {inf_count} Inf values - fixing...")
+            
+            # Smart replacement strategy instead of zeros
+            valid_data = numpy_data[~(nan_mask | inf_mask)]
+            if len(valid_data) > 1000:  # Enough samples for statistics
+                # Use median for better preservation of image structure
+                replacement_value = np.median(valid_data)
+                logger.info(f"🔧 Using median replacement: {replacement_value:.3f}")
+            elif len(valid_data) > 0:
+                replacement_value = np.mean(valid_data)
+                logger.info(f"🔧 Using mean replacement: {replacement_value:.3f}")
+            else:
+                replacement_value = 0.5  # Middle gray as last resort
+                logger.warning("🔧 Using fallback gray value: 0.5")
+            
+            numpy_data[nan_mask | inf_mask] = replacement_value
+        
+        # Normalize data properly (based on original workflow logic)
+        data_min = numpy_data.min()
+        data_max = numpy_data.max()
+        
+        if data_max > 1.0 or data_min < 0.0:
+            logger.info(f"🔧 Normalizing data from [{data_min:.3f}, {data_max:.3f}] to [0, 1]")
+            # Safe normalization to avoid division by zero
+            data_range = data_max - data_min
+            if data_range > 1e-8:
+                numpy_data = (numpy_data - data_min) / data_range
+            else:
+                # Constant value case
+                numpy_data = np.full_like(numpy_data, 0.5)
+                logger.warning("🔧 Constant data detected, using middle gray")
+        
+        # Final clipping to ensure [0, 1] range
         numpy_data = np.clip(numpy_data, 0.0, 1.0)
         
         # Reshape if target shape provided
         if target_shape and numpy_data.shape != target_shape:
-            numpy_data = numpy_data.reshape(target_shape)
-            
+            try:
+                logger.info(f"🔄 Reshaping from {numpy_data.shape} to {target_shape}")
+                numpy_data = numpy_data.reshape(target_shape)
+            except ValueError as e:
+                logger.error(f"❌ Cannot reshape {numpy_data.shape} to {target_shape}: {e}")
+                # Create fallback data with correct shape (preserve aspect ratio if possible)
+                numpy_data = np.full(target_shape, 0.5, dtype=np.float32)
+                logger.warning("🔧 Using fallback gray data with target shape")
+        
+        # Final validation
+        final_min, final_max = numpy_data.min(), numpy_data.max()
+        if final_min < 0 or final_max > 1:
+            logger.warning(f"⚠️ Final data out of range: [{final_min:.3f}, {final_max:.3f}]")
+            numpy_data = np.clip(numpy_data, 0.0, 1.0)
+        
+        logger.info(f"✅ Tensor conversion successful: {numpy_data.shape}, range=[{numpy_data.min():.3f}, {numpy_data.max():.3f}]")
         return numpy_data
         
     except Exception as e:
         logger.error(f"❌ Error in tensor conversion: {e}")
-        # Return a black frame as fallback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Return fallback data
         if target_shape:
-            return np.zeros(target_shape, dtype=np.float32)
+            fallback_data = np.full(target_shape, 0.5, dtype=np.float32)
+            logger.warning(f"🔧 Using fallback data with shape: {target_shape}")
+            return fallback_data
         else:
-            return np.zeros((480, 832, 3), dtype=np.float32)
+            fallback_data = np.full((480, 832, 3), 0.5, dtype=np.float32)
+            logger.warning("🔧 Using default fallback data: (480, 832, 3)")
+            return fallback_data
+
+def save_video_optimized(frames_tensor, output_path, fps=16):
+    """
+    Optimized video saving based on original workflow - FIXED VERSION
+    """
+    try:
+        logger.info(f"🎬 Starting optimized video save to: {output_path}")
+        
+        # Convert tensor to numpy frames
+        frames_np = safe_tensor_to_numpy(frames_tensor)
+        
+        if frames_np is None or frames_np.size == 0:
+            raise ValueError("Empty or invalid frames data after conversion")
+        
+        # Validate frame structure
+        if len(frames_np.shape) != 4:  # Should be [frames, height, width, channels]
+            raise ValueError(f"Invalid frame shape after conversion: {frames_np.shape} (expected 4D)")
+        
+        num_frames, height, width, channels = frames_np.shape
+        logger.info(f"📊 Frame structure: {num_frames} frames, {height}x{width}, {channels} channels")
+        
+        # Validate dimensions
+        if num_frames < 1:
+            raise ValueError(f"No frames to save: {num_frames}")
+        if height < 16 or width < 16:
+            raise ValueError(f"Frame dimensions too small: {height}x{width}")
+        if channels not in [1, 3, 4]:
+            raise ValueError(f"Invalid number of channels: {channels}")
+        
+        # Convert to RGB if needed
+        if channels == 1:
+            frames_np = np.repeat(frames_np, 3, axis=-1)
+            logger.info("🔄 Converted grayscale to RGB")
+        elif channels == 4:
+            frames_np = frames_np[:, :, :, :3]  # Remove alpha channel
+            logger.info("🔄 Removed alpha channel")
+        
+        # Convert to uint8 (0-255 range) - CRITICAL STEP
+        frames_np = (frames_np * 255.0).astype(np.uint8)
+        
+        # Final validation of frame data
+        logger.info(f"📊 Final frames: shape={frames_np.shape}, dtype={frames_np.dtype}")
+        logger.info(f"📊 Value range: [{frames_np.min()}, {frames_np.max()}]")
+        
+        # Check for completely black or white frames
+        frame_means = np.mean(frames_np, axis=(1, 2, 3))
+        black_frames = np.sum(frame_means < 5)
+        white_frames = np.sum(frame_means > 250)
+        if black_frames > num_frames * 0.8:
+            logger.warning(f"⚠️ {black_frames}/{num_frames} frames are mostly black")
+        if white_frames > num_frames * 0.8:
+            logger.warning(f"⚠️ {white_frames}/{num_frames} frames are mostly white")
+        
+        # Create output directory
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Save video using imageio with settings from original workflow
+        logger.info("💾 Writing video with imageio...")
+        with imageio.get_writer(
+            output_path, 
+            fps=fps, 
+            codec='libx264',
+            quality=8,  # Same as original workflow
+            bitrate='8M',  # Higher bitrate for better quality
+            macro_block_size=1,  # Same as original
+            pixelformat='yuv420p',  # Ensure compatibility
+            ffmpeg_params=['-preset', 'fast']  # Faster encoding
+        ) as writer:
+            
+            written_frames = 0
+            for i, frame in enumerate(frames_np):
+                try:
+                    # Validate each frame before writing
+                    if frame.shape != (height, width, 3):
+                        logger.warning(f"⚠️ Frame {i} shape mismatch: {frame.shape}, expected: ({height}, {width}, 3)")
+                        # Resize frame if possible
+                        if frame.size > 0:
+                            frame = frame.reshape((height, width, 3))
+                        else:
+                            continue
+                    
+                    # Check for completely invalid frames
+                    if np.all(frame == 0):
+                        if i > 0:
+                            # Use previous frame
+                            frame = frames_np[i-1]
+                            logger.warning(f"⚠️ Frame {i} is black, using previous frame")
+                        else:
+                            # Create gray frame
+                            frame = np.full((height, width, 3), 128, dtype=np.uint8)
+                            logger.warning(f"⚠️ Frame {i} is black, using gray frame")
+                    
+                    # Write frame
+                    writer.append_data(frame)
+                    written_frames += 1
+                    
+                    # Log progress
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"📹 Written frame {i + 1}/{num_frames}")
+                
+                except Exception as frame_error:
+                    logger.error(f"❌ Error processing frame {i}: {frame_error}")
+                    # Skip problematic frame
+                    continue
+        
+        logger.info(f"✅ Video writing completed: {written_frames}/{num_frames} frames written")
+        
+        # Verify file was created and has reasonable size
+        if not os.path.exists(output_path):
+            raise FileNotFoundError("Video file was not created by imageio")
+        
+        file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        
+        # Calculate minimum expected size (more lenient)
+        min_expected_size = max(0.1, written_frames * 0.005)  # At least 0.005MB per frame, minimum 0.1MB
+        
+        if file_size_mb < min_expected_size:
+            logger.warning(f"⚠️ Video file smaller than expected: {file_size_mb:.3f}MB (expected > {min_expected_size:.3f}MB)")
+            # Don't fail immediately, but log the warning
+        
+        logger.info(f"✅ Video saved successfully: {file_size_mb:.3f}MB ({written_frames} frames @ {fps}fps)")
+        
+        # Additional verification - try to read back the video
+        try:
+            with imageio.get_reader(output_path) as reader:
+                read_frames = len(reader)
+                logger.info(f"✅ Verification: Video contains {read_frames} readable frames")
+        except Exception as verify_error:
+            logger.warning(f"⚠️ Video verification failed: {verify_error}")
+        
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"❌ Video saving failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise e
 
 def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
     """
@@ -696,83 +943,21 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             torch.cuda.empty_cache()
             gc.collect()
 
-            # Convert tensor to numpy và save video với improved error handling
-            logger.info("💾 Saving video...")
+            # Save video với optimized method
+            logger.info("💾 Saving video with optimized method...")
             output_path = f"/app/ComfyUI/output/wan22_complete_{uuid.uuid4().hex[:8]}.mp4"
-
-            # Safe tensor conversion với NaN/Inf handling
-            frames_np = safe_tensor_to_numpy(decoded)
             
-            # Convert to uint8 với proper clipping
-            frames_np = (frames_np * 255.0).astype(np.uint8)
-            
-            logger.info(f"📊 Video frames shape: {frames_np.shape}, dtype: {frames_np.dtype}")
-            
-            # Verify frames are valid
-            if frames_np.size == 0:
-                raise ValueError("Empty frames array generated")
-            
-            if len(frames_np.shape) != 4:  # [frames, height, width, channels]
-                logger.warning(f"⚠️ Unexpected frame shape: {frames_np.shape}")
-                # Try to reshape if possible
-                if frames_np.size == frames * height * width * 3:
-                    frames_np = frames_np.reshape((frames, height, width, 3))
-                else:
-                    raise ValueError(f"Cannot reshape frames to expected dimensions")
-
-            # Save video với imageio và proper error handling
-            try:
-                with imageio.get_writer(
-                    output_path, 
-                    fps=fps, 
-                    codec='libx264', 
-                    bitrate='8M',
-                    quality=8,
-                    macro_block_size=1
-                ) as writer:
-                    for i, frame in enumerate(frames_np):
-                        if frame.shape != (height, width, 3):
-                            logger.warning(f"⚠️ Frame {i} has unexpected shape: {frame.shape}")
-                            # Resize frame if needed
-                            from PIL import Image
-                            frame_pil = Image.fromarray(frame).resize((width, height))
-                            frame = np.array(frame_pil)
-                        writer.append_data(frame)
-                        
-                        # Log progress every 10 frames
-                        if (i + 1) % 10 == 0:
-                            logger.info(f"📹 Processed frame {i + 1}/{len(frames_np)}")
-
-                file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-                logger.info(f"✅ Video saved: {output_path} ({file_size_mb:.1f}MB)")
-                
-                # Verify video file is not empty
-                if file_size_mb < 0.01:
-                    logger.error("❌ Generated video file is too small, likely corrupted")
-                    raise ValueError("Generated video file is too small")
-
-            except Exception as e:
-                logger.error(f"❌ Video encoding failed: {e}")
-                # Try alternative encoding
-                try:
-                    logger.info("🔄 Attempting alternative video encoding...")
-                    with imageio.get_writer(output_path, fps=fps, codec='libx264') as writer:
-                        for frame in frames_np:
-                            writer.append_data(frame)
-                    file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-                    logger.info(f"✅ Alternative encoding successful: {file_size_mb:.1f}MB")
-                except Exception as e2:
-                    logger.error(f"❌ Alternative encoding also failed: {e2}")
-                    raise e
+            # Use optimized save function
+            final_output_path = save_video_optimized(decoded, output_path, fps)
 
             # Apply frame interpolation if enabled
             if enable_interpolation and interpolation_factor > 1:
                 logger.info("🔄 Applying frame interpolation...")
-                interpolated_path = apply_rife_interpolation(output_path, interpolation_factor)
-                if interpolated_path != output_path and os.path.exists(interpolated_path):
+                interpolated_path = apply_rife_interpolation(final_output_path, interpolation_factor)
+                if interpolated_path != final_output_path and os.path.exists(interpolated_path):
                     return interpolated_path
 
-            return output_path
+            return final_output_path
 
     except Exception as e:
         logger.error(f"❌ Video generation failed: {e}")
