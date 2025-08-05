@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 """
-RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - ENHANCED FINAL VERSION
-Enhanced với Aspect Ratio Control, Auto 720p, và Smart Image Processing
+RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - RIFE FIXED VERSION
+Fixed RIFE interpolation using subprocess approach
 Based on wan22_Lightx2v.ipynb workflow - All fixes and optimizations included
 """
 
@@ -20,6 +20,7 @@ import gc
 import json
 import random
 import traceback
+import subprocess
 from pathlib import Path
 from minio import Minio
 from urllib.parse import quote, urlparse
@@ -431,13 +432,13 @@ def get_lightx2v_lora_path(lightx2v_rank: str) -> str:
     config_key = rank_mapping.get(lightx2v_rank, "lightx2v_rank_32")
     return MODEL_CONFIGS.get(config_key)
 
-def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> str:
+def apply_rife_interpolation_subprocess(video_path: str, interpolation_factor: int = 2) -> str:
     """
-    Apply RIFE frame interpolation để tăng FPS
-    IMPROVED VERSION - Better error handling và path validation
+    🔧 FIXED: Apply RIFE frame interpolation using subprocess approach
+    Tránh import conflicts bằng cách gọi RIFE script trực tiếp
     """
     try:
-        logger.info(f"🔄 Applying RIFE interpolation (factor: {interpolation_factor})...")
+        logger.info(f"🔄 Applying RIFE interpolation (factor: {interpolation_factor}) via subprocess...")
         
         # Validate input file
         if not os.path.exists(video_path):
@@ -447,41 +448,117 @@ def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> 
         original_size = os.path.getsize(video_path) / (1024 * 1024)
         logger.info(f"📊 Original video: {original_size:.1f}MB")
         
-        # Import RIFE modules với better error handling
-        try:
-            sys.path.append('/app/Practical-RIFE')
-            from inference_video import interpolate_video
-        except ImportError as e:
-            logger.error(f"❌ RIFE module import failed: {e}")
+        # Check if RIFE script exists
+        rife_script = "/app/Practical-RIFE/inference_video.py"
+        if not os.path.exists(rife_script):
+            logger.error(f"❌ RIFE script not found: {rife_script}")
             logger.warning("⚠️ Frame interpolation not available, returning original")
             return video_path
         
         # Generate output path
         output_path = video_path.replace('.mp4', f'_rife_x{interpolation_factor}.mp4')
         
-        # Apply RIFE interpolation với timeout protection
-        try:
-            interpolate_video(
-                input_path=video_path,
-                output_path=output_path,
-                times=interpolation_factor,
-                fps=None  # Keep original FPS * factor
-            )
-        except Exception as e:
-            logger.error(f"❌ RIFE interpolation process failed: {e}")
-            logger.warning("⚠️ Returning original video")
-            return video_path
+        # Setup environment variables để tránh ALSA errors
+        env = os.environ.copy()
+        env["XDG_RUNTIME_DIR"] = "/tmp"
+        env["SDL_AUDIODRIVER"] = "dummy"
+        env["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+        env["FFMPEG_LOGLEVEL"] = "quiet"
         
-        # Validate output
-        if os.path.exists(output_path):
-            interpolated_size = os.path.getsize(output_path) / (1024 * 1024)
+        # Build command để gọi RIFE script
+        cmd = [
+            "python3",
+            rife_script,
+            f"--multi={interpolation_factor}",
+            f"--video={video_path}",
+            "--scale=1.0",
+            "--fps=30"  # Output fps
+        ]
+        
+        logger.info(f"🔧 Running RIFE command: {' '.join(cmd)}")
+        
+        # Change to RIFE directory
+        original_cwd = os.getcwd()
+        os.chdir("/app/Practical-RIFE")
+        
+        try:
+            # Run RIFE với timeout protection
+            result = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 minutes timeout
+                check=False
+            )
+            
+            # Log output for debugging
+            if result.stdout:
+                logger.info(f"📝 RIFE stdout: {result.stdout[:500]}...")
+            if result.stderr:
+                logger.info(f"📝 RIFE stderr: {result.stderr[:500]}...")
+            
+            if result.returncode != 0:
+                logger.error(f"❌ RIFE process failed with return code: {result.returncode}")
+                return video_path
+                
+        except subprocess.TimeoutExpired:
+            logger.error("❌ RIFE process timed out")
+            return video_path
+        except Exception as e:
+            logger.error(f"❌ RIFE subprocess failed: {e}")
+            return video_path
+        finally:
+            # Restore original directory
+            os.chdir(original_cwd)
+        
+        # Find generated interpolated file
+        # RIFE typically generates files in current directory or output folder
+        possible_outputs = [
+            output_path,
+            video_path.replace('.mp4', f'_rife.mp4'),
+            os.path.join("/app/Practical-RIFE", os.path.basename(video_path).replace('.mp4', f'_{interpolation_factor}X.mp4')),
+            os.path.join("/app/Practical-RIFE", "output.mp4")
+        ]
+        
+        interpolated_file = None
+        for possible_path in possible_outputs:
+            if os.path.exists(possible_path):
+                interpolated_file = possible_path
+                logger.info(f"🔍 Found interpolated file: {interpolated_file}")
+                break
+        
+        if not interpolated_file:
+            # Check output directory for any new MP4 files
+            output_dir = "/app/Practical-RIFE"
+            for file in os.listdir(output_dir):
+                if file.endswith('.mp4') and file != os.path.basename(video_path):
+                    potential_file = os.path.join(output_dir, file)
+                    # Check if file was created recently (within last 5 minutes)
+                    if time.time() - os.path.getctime(potential_file) < 300:
+                        interpolated_file = potential_file
+                        logger.info(f"🔍 Found recent interpolated file: {interpolated_file}")
+                        break
+        
+        if interpolated_file and os.path.exists(interpolated_file):
+            interpolated_size = os.path.getsize(interpolated_file) / (1024 * 1024)
+            
             # Check if interpolated file is reasonable
             if interpolated_size < original_size * 0.5:  # Too small might indicate failure
                 logger.warning(f"⚠️ Interpolated file suspiciously small: {interpolated_size:.1f}MB vs {original_size:.1f}MB")
                 return video_path
             
+            # Move to final output path if needed
+            if interpolated_file != output_path:
+                import shutil
+                try:
+                    shutil.move(interpolated_file, output_path)
+                    interpolated_file = output_path
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not move file: {e}")
+            
             logger.info(f"✅ RIFE interpolation completed: {original_size:.1f}MB → {interpolated_size:.1f}MB")
-            return output_path
+            return interpolated_file
         else:
             logger.warning("⚠️ RIFE interpolation failed to create output file")
             return video_path
@@ -971,7 +1048,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             # Use the FINAL save function
             final_output_path = save_video_optimized(decoded, output_path, fps)
             
-            # FRAME INTERPOLATION - Apply if enabled (IMPROVED VERSION)
+            # 🔧 FIXED: FRAME INTERPOLATION - Apply if enabled with subprocess approach
             if enable_interpolation and interpolation_factor > 1:
                 logger.info(f"🔄 Applying frame interpolation (factor: {interpolation_factor})...")
                 
@@ -979,8 +1056,8 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
                 pre_interp_size = os.path.getsize(final_output_path) / (1024 * 1024)
                 logger.info(f"📊 Pre-interpolation: {pre_interp_size:.1f}MB")
                 
-                # Apply interpolation
-                interpolated_path = apply_rife_interpolation(final_output_path, interpolation_factor)
+                # Apply interpolation với subprocess approach
+                interpolated_path = apply_rife_interpolation_subprocess(final_output_path, interpolation_factor)
                 
                 # Check if interpolation was successful
                 if interpolated_path != final_output_path and os.path.exists(interpolated_path):
@@ -1097,7 +1174,7 @@ def validate_input_parameters(job_input: dict) -> tuple[bool, str]:
 def handler(job):
     """
     ENHANCED Main RunPod handler cho WAN2.2 LightX2V Q6_K
-    FINAL COMPLETE VERSION với aspect ratio control - All fixes and optimizations included
+    RIFE FIXED VERSION với subprocess approach - All fixes and optimizations included
     """
     job_id = job.get("id", "unknown")
     start_time = time.time()
@@ -1188,7 +1265,7 @@ def handler(job):
             "interpolation_factor": job_input.get("interpolation_factor", 2)
         }
         
-        logger.info(f"🚀 Job {job_id}: WAN2.2 ENHANCED Generation Started")
+        logger.info(f"🚀 Job {job_id}: WAN2.2 RIFE FIXED Generation Started")
         logger.info(f"🖼️ Image: {image_url}")
         logger.info(f"📝 Prompt: {positive_prompt[:100]}...")
         logger.info(f"⚙️ Resolution: {parameters['width']}x{parameters['height']}")
@@ -1227,7 +1304,7 @@ def handler(job):
                 return {"error": f"Failed to download image: {str(e)}"}
             
             # Generate video với ENHANCED notebook workflow
-            logger.info("🎬 Starting ENHANCED video generation (notebook workflow)...")
+            logger.info("🎬 Starting RIFE FIXED video generation (notebook workflow)...")
             generation_start = time.time()
             
             output_path = generate_video_wan22_complete(
@@ -1333,7 +1410,7 @@ def handler(job):
                         "auto_720p": parameters["auto_720p"]
                     },
                     "model_quantization": "Q6_K",
-                    "workflow_version": "ENHANCED_FINAL_COMPLETE"
+                    "workflow_version": "RIFE_FIXED_COMPLETE"
                 },
                 "status": "completed"
             }
@@ -1379,7 +1456,7 @@ def health_check():
         return False, f"Health check failed: {str(e)}"
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting WAN2.2 LightX2V ENHANCED Serverless Worker...")
+    logger.info("🚀 Starting WAN2.2 LightX2V RIFE FIXED Serverless Worker...")
     logger.info(f"🔥 PyTorch: {torch.__version__}")
     logger.info(f"🎯 CUDA Available: {torch.cuda.is_available()}")
     
@@ -1395,8 +1472,8 @@ if __name__ == "__main__":
             sys.exit(1)
         
         logger.info(f"✅ Health check passed: {health_msg}")
-        logger.info("🎬 Ready to process WAN2.2 LightX2V requests (ENHANCED FINAL VERSION)...")
-        logger.info("🔧 All fixes, optimizations và aspect ratio control included - Production ready!")
+        logger.info("🎬 Ready to process WAN2.2 LightX2V requests (RIFE FIXED VERSION)...")
+        logger.info("🔧 All fixes, optimizations, aspect ratio control và RIFE fix included - Production ready!")
         
         # Start RunPod worker
         runpod.serverless.start({"handler": handler})
