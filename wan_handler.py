@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+
 """
-RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - COMPLETE FINAL VERSION
+RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - ENHANCED FINAL VERSION
+Enhanced với Aspect Ratio Control, Auto 720p, và Smart Image Processing
 Based on wan22_Lightx2v.ipynb workflow - All fixes and optimizations included
 """
 
@@ -101,17 +103,17 @@ MODEL_CONFIGS = {
     
     # Supporting models (exact filenames from notebook)
     "text_encoder": "/app/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-    "vae": "/app/ComfyUI/models/vae/wan_2.1_vae.safetensors", 
+    "vae": "/app/ComfyUI/models/vae/wan_2.1_vae.safetensors",
     "clip_vision": "/app/ComfyUI/models/clip_vision/clip_vision_h.safetensors",
     
     # LightX2V LoRAs theo rank (matching notebook)
     "lightx2v_rank_32": "/app/ComfyUI/models/loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank32_bf16.safetensors",
-    "lightx2v_rank_64": "/app/ComfyUI/models/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", 
+    "lightx2v_rank_64": "/app/ComfyUI/models/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
     "lightx2v_rank_128": "/app/ComfyUI/models/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank128_bf16.safetensors",
     
     # Built-in LoRAs với tên file chính xác từ notebook
     "walking_to_viewers": "/app/ComfyUI/models/loras/walking to viewers_Wan.safetensors",
-    "walking_from_behind": "/app/ComfyUI/models/loras/walking_from_behind.safetensors", 
+    "walking_from_behind": "/app/ComfyUI/models/loras/walking_from_behind.safetensors",
     "dancing": "/app/ComfyUI/models/loras/b3ll13-d8nc3r.safetensors",
     "pusa_lora": "/app/ComfyUI/models/loras/Wan21_PusaV1_LoRA_14B_rank512_bf16.safetensors",
     "rotate_lora": "/app/ComfyUI/models/loras/rotate_20_epochs.safetensors"
@@ -169,6 +171,7 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
     try:
         lora_dir = "/app/ComfyUI/models/loras"
         os.makedirs(lora_dir, exist_ok=True)
+        
         logger.info(f"🎨 Downloading LoRA from: {lora_url}")
         
         if "huggingface.co" in lora_url:
@@ -197,11 +200,11 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
                     model_id = lora_url.split("/models/")[1].split("?")[0].split("/")[0]
                 else:
                     raise ValueError("Invalid CivitAI URL format")
-                    
+                
                 headers = {}
                 if civitai_token:
                     headers["Authorization"] = f"Bearer {civitai_token}"
-                    
+                
                 api_url = f"https://civitai.com/api/download/models/{model_id}?type=Model&format=SafeTensor"
                 logger.info(f"📥 Downloading from CivitAI: model_id={model_id}")
                 
@@ -221,7 +224,6 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
-                            
                             if total_size > 0:
                                 progress = (downloaded / total_size) * 100
                                 if downloaded % (1024 * 1024 * 10) == 0:  # Log every 10MB
@@ -233,7 +235,6 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
             except Exception as e:
                 logger.error(f"❌ CivitAI download failed: {e}")
                 return None
-                
         else:
             # Direct download
             filename = os.path.basename(urlparse(lora_url).path)
@@ -254,7 +255,7 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
             file_size = os.path.getsize(local_path) / (1024 * 1024)
             logger.info(f"✅ Direct LoRA downloaded: {filename} ({file_size:.1f}MB)")
             return local_path
-            
+        
         return None
         
     except Exception as e:
@@ -262,14 +263,172 @@ def download_lora_dynamic(lora_url: str, civitai_token: str = None) -> str:
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
+def calculate_aspect_preserving_dimensions(original_width, original_height, target_width, target_height):
+    """
+    ENHANCED: Tính toán kích thước giữ nguyên aspect ratio với padding
+    """
+    original_ratio = original_width / original_height
+    target_ratio = target_width / target_height
+    
+    if original_ratio > target_ratio:
+        # Ảnh rộng hơn -> padding top/bottom
+        new_width = target_width
+        new_height = int(target_width / original_ratio)
+    else:
+        # Ảnh cao hơn -> padding left/right  
+        new_height = target_height
+        new_width = int(target_height * original_ratio)
+    
+    # Đảm bảo chia hết cho 8 cho video encoding
+    new_width = (new_width // 8) * 8
+    new_height = (new_height // 8) * 8
+    
+    return new_width, new_height
+
+def calculate_crop_dimensions(original_width, original_height, target_width, target_height):
+    """
+    ENHANCED: Tính toán crop thông minh để giữ nguyên tỉ lệ
+    """
+    target_ratio = target_width / target_height
+    original_ratio = original_width / original_height
+    
+    if original_ratio > target_ratio:
+        # Ảnh rộng hơn -> crop width
+        crop_height = original_height
+        crop_width = int(original_height * target_ratio)
+        crop_x = (original_width - crop_width) // 2
+        crop_y = 0
+    else:
+        # Ảnh cao hơn -> crop height  
+        crop_width = original_width
+        crop_height = int(original_width / target_ratio)
+        crop_x = 0
+        crop_y = (original_height - crop_height) // 2
+    
+    return crop_x, crop_y, crop_width, crop_height
+
+def process_image_with_aspect_control(
+    image_path: str,
+    target_width: int = 720,
+    target_height: int = 1280,
+    aspect_mode: str = "preserve",  # "preserve", "crop", "stretch"
+    auto_720p: bool = False
+):
+    """
+    ENHANCED: Xử lý ảnh với các chế độ aspect ratio khác nhau
+    
+    Args:
+        aspect_mode: 
+            - "preserve": Giữ nguyên tỉ lệ, padding nếu cần
+            - "crop": Crop thông minh để fit target ratio
+            - "stretch": Stretch trực tiếp (như cũ)
+        auto_720p: Tự động điều chỉnh về chuẩn 720p
+    """
+    try:
+        # Initialize nodes
+        load_image = LoadImage()
+        image_scaler = ImageScale()
+        
+        # Load ảnh gốc
+        loaded_image = load_image.load_image(image_path)[0]
+        
+        # Lấy kích thước gốc
+        if loaded_image.ndim == 4:
+            _, orig_height, orig_width, _ = loaded_image.shape
+        else:
+            orig_height, orig_width, _ = loaded_image.shape
+        
+        logger.info(f"🖼️ Original image: {orig_width}x{orig_height}")
+        
+        # Auto 720p detection
+        if auto_720p:
+            # Tự động chọn orientation dựa trên ảnh gốc
+            if orig_width > orig_height:
+                # Landscape -> 720p horizontal
+                target_width, target_height = 1280, 720
+            else:
+                # Portrait -> 720p vertical  
+                target_width, target_height = 720, 1280
+            logger.info(f"📱 Auto 720p mode: {target_width}x{target_height}")
+        
+        if aspect_mode == "preserve":
+            # Giữ nguyên aspect ratio với padding
+            new_width, new_height = calculate_aspect_preserving_dimensions(
+                orig_width, orig_height, target_width, target_height
+            )
+            
+            # Scale về kích thước tính toán
+            scaled_image = image_scaler.upscale(
+                loaded_image, "lanczos", new_width, new_height, "disabled"
+            )[0]
+            
+            # Padding để đạt target size nếu cần
+            if new_width != target_width or new_height != target_height:
+                # Tạo tensor với padding
+                pad_x = (target_width - new_width) // 2
+                pad_y = (target_height - new_height) // 2
+                
+                # Convert to tensor format for padding
+                if scaled_image.ndim == 3:
+                    scaled_image = scaled_image.unsqueeze(0)  # Add batch dim
+                
+                # Padding: (left, right, top, bottom)
+                padded = F.pad(
+                    scaled_image.permute(0, 3, 1, 2),  # BHWC -> BCHW
+                    (pad_x, target_width - new_width - pad_x, 
+                     pad_y, target_height - new_height - pad_y),
+                    mode='constant', value=0
+                )
+                
+                final_image = padded.permute(0, 2, 3, 1)[0]  # BCHW -> HWC
+            else:
+                final_image = scaled_image
+                
+            logger.info(f"📐 Preserve mode: {orig_width}x{orig_height} -> {new_width}x{new_height} -> {target_width}x{target_height}")
+            
+        elif aspect_mode == "crop":
+            # Smart crop để giữ nguyên aspect ratio
+            crop_x, crop_y, crop_width, crop_height = calculate_crop_dimensions(
+                orig_width, orig_height, target_width, target_height
+            )
+            
+            # Crop ảnh gốc trước
+            if loaded_image.ndim == 3:
+                cropped = loaded_image[crop_y:crop_y+crop_height, crop_x:crop_x+crop_width, :]
+            else:
+                cropped = loaded_image[0, crop_y:crop_y+crop_height, crop_x:crop_x+crop_width, :]
+                cropped = cropped.unsqueeze(0)
+            
+            # Scale về target size
+            final_image = image_scaler.upscale(
+                cropped, "lanczos", target_width, target_height, "disabled"
+            )[0]
+            
+            logger.info(f"✂️ Crop mode: {orig_width}x{orig_height} -> crop({crop_width}x{crop_height}) -> {target_width}x{target_height}")
+            
+        else:  # stretch
+            # Stretch trực tiếp (workflow cũ)
+            final_image = image_scaler.upscale(
+                loaded_image, "lanczos", target_width, target_height, "disabled"
+            )[0]
+            
+            logger.info(f"🔄 Stretch mode: {orig_width}x{orig_height} -> {target_width}x{target_height}")
+        
+        return final_image, target_width, target_height
+        
+    except Exception as e:
+        logger.error(f"❌ Image processing failed: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise e
+
 def get_lightx2v_lora_path(lightx2v_rank: str) -> str:
     """Get LightX2V LoRA path theo rank (exact from notebook)"""
     rank_mapping = {
         "32": "lightx2v_rank_32",
-        "64": "lightx2v_rank_64", 
+        "64": "lightx2v_rank_64",
         "128": "lightx2v_rank_128"
     }
-    config_key = rank_mapping.get(lightx2v_rank, "64")
+    config_key = rank_mapping.get(lightx2v_rank, "lightx2v_rank_32")
     return MODEL_CONFIGS.get(config_key)
 
 def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> str:
@@ -284,7 +443,7 @@ def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> 
         if not os.path.exists(video_path):
             logger.error(f"❌ Input video not found: {video_path}")
             return video_path
-            
+        
         original_size = os.path.getsize(video_path) / (1024 * 1024)
         logger.info(f"📊 Original video: {original_size:.1f}MB")
         
@@ -316,12 +475,11 @@ def apply_rife_interpolation(video_path: str, interpolation_factor: int = 2) -> 
         # Validate output
         if os.path.exists(output_path):
             interpolated_size = os.path.getsize(output_path) / (1024 * 1024)
-            
             # Check if interpolated file is reasonable
             if interpolated_size < original_size * 0.5:  # Too small might indicate failure
                 logger.warning(f"⚠️ Interpolated file suspiciously small: {interpolated_size:.1f}MB vs {original_size:.1f}MB")
                 return video_path
-                
+            
             logger.info(f"✅ RIFE interpolation completed: {original_size:.1f}MB → {interpolated_size:.1f}MB")
             return output_path
         else:
@@ -339,12 +497,11 @@ def clear_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
-        
-    # Additional CUDA memory cleanup
-    try:
-        torch.cuda.synchronize()
-    except:
-        pass
+        # Additional CUDA memory cleanup
+        try:
+            torch.cuda.synchronize()
+        except:
+            pass
 
 def save_video_optimized(frames_tensor, output_path, fps=16):
     """
@@ -415,11 +572,10 @@ def save_video_optimized(frames_tensor, output_path, fps=16):
             with imageio.get_writer(output_path, fps=fps) as writer:
                 for i, frame in enumerate(frames_list):
                     writer.append_data(frame)
-                    
                     # Log progress every 10 frames
                     if (i + 1) % 10 == 0:
                         logger.info(f"📹 Written frame {i + 1}/{num_frames}")
-        
+                        
         except Exception as write_error:
             logger.error(f"❌ Primary video write failed: {write_error}")
             logger.info("🔄 Trying alternative video encoding...")
@@ -459,19 +615,23 @@ def save_video_optimized(frames_tensor, output_path, fps=16):
 
 def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
     """
-    Complete WAN2.2 video generation theo CHÍNH XÁC workflow của notebook
-    FINAL VERSION - All optimizations and fixes included
+    ENHANCED Complete WAN2.2 video generation với aspect ratio control
+    FINAL VERSION - All optimizations and fixes included với enhanced image processing
     """
     try:
-        logger.info("🎬 Starting WAN2.2 Q6_K FINAL generation (notebook workflow)...")
+        logger.info("🎬 Starting WAN2.2 Q6_K ENHANCED generation (notebook workflow)...")
         
         # Extract parameters với CHÍNH XÁC default values từ notebook
         positive_prompt = kwargs.get('positive_prompt', '')
         negative_prompt = kwargs.get('negative_prompt', '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走')
         
+        # ENHANCED: Aspect ratio control parameters
+        aspect_mode = kwargs.get('aspect_mode', 'preserve')  # preserve, crop, stretch
+        auto_720p = kwargs.get('auto_720p', False)
+        
         # Video settings (matching notebook defaults)
         width = kwargs.get('width', 720)
-        height = kwargs.get('height', 1280) 
+        height = kwargs.get('height', 1280)
         seed = kwargs.get('seed', 0)
         steps = kwargs.get('steps', 6)
         high_noise_steps = kwargs.get('high_noise_steps', 3)
@@ -489,11 +649,9 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         lora_url = kwargs.get('lora_url', None)
         lora_strength = kwargs.get('lora_strength', 1.0)
         civitai_token = kwargs.get('civitai_token', None)
-        
         use_lora2 = kwargs.get('use_lora2', False)
         lora2_url = kwargs.get('lora2_url', None)
         lora2_strength = kwargs.get('lora2_strength', 1.0)
-        
         use_lora3 = kwargs.get('use_lora3', False)
         lora3_url = kwargs.get('lora3_url', None)
         lora3_strength = kwargs.get('lora3_strength', 1.0)
@@ -536,6 +694,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         
         logger.info(f"🎯 Generation Parameters:")
         logger.info(f"  Resolution: {width}x{height}")
+        logger.info(f"  Aspect Mode: {aspect_mode}, Auto 720p: {auto_720p}")
         logger.info(f"  Frames: {frames}, FPS: {fps}")
         logger.info(f"  Steps: {steps} (high noise: {high_noise_steps})")
         logger.info(f"  CFG Scale: {cfg_scale}, Seed: {seed}")
@@ -547,16 +706,6 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
         # Verify ComfyUI availability
         if not COMFYUI_AVAILABLE:
             raise RuntimeError("ComfyUI modules not available")
-        
-        # Auto-adjust height if 0 (maintain aspect ratio)
-        if height == 0:
-            from PIL import Image
-            with Image.open(image_path) as img:
-                original_width, original_height = img.size
-                height = int(width * original_height / original_width)
-                # Ensure height is multiple of 8 for video encoding
-                height = (height // 8) * 8
-                logger.info(f"🔄 Auto-adjusted height: {height} (aspect ratio preserved)")
         
         with torch.inference_mode():
             # Initialize all ComfyUI nodes (EXACT như notebook)
@@ -572,11 +721,9 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             vae_loader = VAELoader()
             clip_vision_loader = CLIPVisionLoader()
             clip_vision_encode = CLIPVisionEncode()
-            load_image = LoadImage()
             wan_image_to_video = WanImageToVideo()
             ksampler = KSamplerAdvanced()
             vae_decode = VAEDecode()
-            image_scaler = ImageScale()
             
             # LoRA loaders
             pAssLora = LoraLoaderModelOnly()
@@ -603,29 +750,18 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             del clip
             clear_memory()
             
-            # Load và process image (EXACT như notebook)
-            logger.info("🖼️ Loading and processing image...")
-            loaded_image = load_image.load_image(image_path)[0]
+            # ENHANCED: Load và process image với aspect control
+            logger.info("🖼️ Loading and processing image with ENHANCED aspect control...")
+            loaded_image, final_width, final_height = process_image_with_aspect_control(
+                image_path=image_path,
+                target_width=width,
+                target_height=height,
+                aspect_mode=aspect_mode,
+                auto_720p=auto_720p
+            )
             
-            # Get image dimensions
-            if loaded_image.ndim == 4:
-                _, height_int, width_int, _ = loaded_image.shape
-            elif loaded_image.ndim == 3:
-                height_int, width_int, _ = loaded_image.shape
-            else:
-                raise ValueError(f"Unsupported image shape: {loaded_image.shape}")
-            
-            logger.info(f"Image resolution is {width_int}x{height_int}")
-            logger.info(f"Scaling image to {width}x{height}...")
-            
-            # Scale image
-            loaded_image = image_scaler.upscale(
-                loaded_image,
-                "lanczos", 
-                width,
-                height,
-                "disabled"
-            )[0]
+            # Update dimensions for video generation
+            width, height = final_width, final_height
             
             # CLIP Vision processing (optional, disabled by default như notebook)
             clip_vision_output = None
@@ -830,7 +966,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             
             # Save video với FINAL optimized method
             logger.info("💾 Saving video with FINAL OPTIMIZED method...")
-            output_path = f"/app/ComfyUI/output/wan22_final_{uuid.uuid4().hex[:8]}.mp4"
+            output_path = f"/app/ComfyUI/output/wan22_enhanced_{uuid.uuid4().hex[:8]}.mp4"
             
             # Use the FINAL save function
             final_output_path = save_video_optimized(decoded, output_path, fps)
@@ -854,6 +990,7 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
                     return interpolated_path
                 else:
                     logger.warning("⚠️ Frame interpolation failed or disabled, using original video")
+                    return final_output_path
             
             return final_output_path
             
@@ -888,7 +1025,7 @@ def upload_to_minio(local_path: str, object_name: str) -> str:
         raise e
 
 def validate_input_parameters(job_input: dict) -> tuple[bool, str]:
-    """Validate input parameters với comprehensive checking"""
+    """ENHANCED Validate input parameters với comprehensive checking"""
     try:
         # Required parameters
         required_params = ["image_url", "positive_prompt"]
@@ -915,6 +1052,11 @@ def validate_input_parameters(job_input: dict) -> tuple[bool, str]:
         frames = job_input.get("frames", 65)
         if not (1 <= frames <= 100):
             return False, "Frames must be between 1 and 100"
+        
+        # ENHANCED: Validate aspect_mode
+        aspect_mode = job_input.get("aspect_mode", "preserve")
+        if aspect_mode not in ["preserve", "crop", "stretch"]:
+            return False, "aspect_mode must be one of: preserve, crop, stretch"
         
         # Validate LightX2V rank
         lightx2v_rank = job_input.get("lightx2v_rank", "32")
@@ -954,8 +1096,8 @@ def validate_input_parameters(job_input: dict) -> tuple[bool, str]:
 
 def handler(job):
     """
-    Main RunPod handler cho WAN2.2 LightX2V Q6_K
-    FINAL COMPLETE VERSION - All fixes and optimizations included
+    ENHANCED Main RunPod handler cho WAN2.2 LightX2V Q6_K
+    FINAL COMPLETE VERSION với aspect ratio control - All fixes and optimizations included
     """
     job_id = job.get("id", "unknown")
     start_time = time.time()
@@ -993,6 +1135,10 @@ def handler(job):
             "scheduler": job_input.get("scheduler", "simple"),
             "frames": job_input.get("frames", 65),
             "fps": job_input.get("fps", 16),
+            
+            # ENHANCED: Aspect ratio control
+            "aspect_mode": job_input.get("aspect_mode", "preserve"),  # preserve, crop, stretch
+            "auto_720p": job_input.get("auto_720p", False),
             
             # Prompt assist
             "prompt_assist": job_input.get("prompt_assist", "none"),
@@ -1042,10 +1188,11 @@ def handler(job):
             "interpolation_factor": job_input.get("interpolation_factor", 2)
         }
         
-        logger.info(f"🚀 Job {job_id}: WAN2.2 FINAL Generation Started")
+        logger.info(f"🚀 Job {job_id}: WAN2.2 ENHANCED Generation Started")
         logger.info(f"🖼️ Image: {image_url}")
         logger.info(f"📝 Prompt: {positive_prompt[:100]}...")
         logger.info(f"⚙️ Resolution: {parameters['width']}x{parameters['height']}")
+        logger.info(f"🎨 Aspect Mode: {parameters['aspect_mode']}, Auto 720p: {parameters['auto_720p']}")
         logger.info(f"🎬 Animation: {parameters['frames']} frames @ {parameters['fps']} FPS")
         logger.info(f"🎨 LightX2V: rank {parameters['lightx2v_rank']}, strength {parameters['lightx2v_strength']}")
         logger.info(f"🔄 Interpolation: {parameters['enable_interpolation']} (factor: {parameters['interpolation_factor']})")
@@ -1079,8 +1226,8 @@ def handler(job):
             except Exception as e:
                 return {"error": f"Failed to download image: {str(e)}"}
             
-            # Generate video với notebook workflow
-            logger.info("🎬 Starting FINAL video generation (notebook workflow)...")
+            # Generate video với ENHANCED notebook workflow
+            logger.info("🎬 Starting ENHANCED video generation (notebook workflow)...")
             generation_start = time.time()
             
             output_path = generate_video_wan22_complete(
@@ -1095,7 +1242,7 @@ def handler(job):
             
             # Upload result to MinIO
             logger.info("📤 Uploading result to storage...")
-            output_filename = f"wan22_final_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
+            output_filename = f"wan22_enhanced_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
             
             try:
                 output_url = upload_to_minio(output_path, output_filename)
@@ -1127,10 +1274,12 @@ def handler(job):
                     "height": parameters["height"],
                     "frames": parameters["frames"],
                     "fps": parameters["fps"],
-                    "duration_seconds": round(duration_seconds, 2),  
+                    "duration_seconds": round(duration_seconds, 2),
                     "file_size_mb": round(file_size_mb, 2),
                     "interpolated": parameters["enable_interpolation"],
-                    "interpolation_factor": parameters["interpolation_factor"] if parameters["enable_interpolation"] else 1
+                    "interpolation_factor": parameters["interpolation_factor"] if parameters["enable_interpolation"] else 1,
+                    "aspect_mode": parameters["aspect_mode"],
+                    "auto_720p": parameters["auto_720p"]
                 },
                 "generation_params": {
                     "positive_prompt": parameters["positive_prompt"],
@@ -1179,8 +1328,12 @@ def handler(job):
                         "enabled": parameters["enable_interpolation"],
                         "factor": parameters["interpolation_factor"]
                     },
+                    "aspect_control": {
+                        "mode": parameters["aspect_mode"],
+                        "auto_720p": parameters["auto_720p"]
+                    },
                     "model_quantization": "Q6_K",
-                    "workflow_version": "FINAL_COMPLETE"
+                    "workflow_version": "ENHANCED_FINAL_COMPLETE"
                 },
                 "status": "completed"
             }
@@ -1196,6 +1349,7 @@ def handler(job):
             "processing_time_seconds": round(time.time() - start_time, 2),
             "job_id": job_id
         }
+        
     finally:
         clear_memory()
 
@@ -1225,7 +1379,7 @@ def health_check():
         return False, f"Health check failed: {str(e)}"
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting WAN2.2 LightX2V FINAL Serverless Worker...")
+    logger.info("🚀 Starting WAN2.2 LightX2V ENHANCED Serverless Worker...")
     logger.info(f"🔥 PyTorch: {torch.__version__}")
     logger.info(f"🎯 CUDA Available: {torch.cuda.is_available()}")
     
@@ -1241,8 +1395,8 @@ if __name__ == "__main__":
             sys.exit(1)
         
         logger.info(f"✅ Health check passed: {health_msg}")
-        logger.info("🎬 Ready to process WAN2.2 LightX2V requests (FINAL COMPLETE VERSION)...")
-        logger.info("🔧 All fixes and optimizations included - Production ready!")
+        logger.info("🎬 Ready to process WAN2.2 LightX2V requests (ENHANCED FINAL VERSION)...")
+        logger.info("🔧 All fixes, optimizations và aspect ratio control included - Production ready!")
         
         # Start RunPod worker
         runpod.serverless.start({"handler": handler})
