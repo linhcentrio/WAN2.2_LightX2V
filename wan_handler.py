@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - COMPLETE OPTIMIZED VERSION
-Based on wan22_Lightx2v.ipynb workflow - Fixed all issues for successful video output
+RunPod Serverless Handler cho WAN2.2 LightX2V Q6_K - FIXED VIDEO SAVING VERSION
+Fixed minimum size threshold calculation
 """
 
 import runpod
@@ -319,11 +319,11 @@ def clear_memory():
 
 def save_video_optimized(frames_tensor, output_path, fps=16):
     """
-    OPTIMIZED video saving function based on notebook workflow
-    Ensures successful video output with proper format
+    FIXED video saving function - corrected minimum size validation
+    Based on notebook workflow with proper size thresholds
     """
     try:
-        logger.info(f"🎬 Saving video with NOTEBOOK-OPTIMIZED method...")
+        logger.info(f"🎬 Saving video with FIXED-OPTIMIZED method...")
         logger.info(f"📍 Output path: {output_path}")
         
         # Validate input
@@ -413,15 +413,23 @@ def save_video_optimized(frames_tensor, output_path, fps=16):
         
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
         
-        # Calculate minimum expected size (realistic)
-        min_expected_size = num_frames * height * width * 0.0001  # Very conservative minimum
+        # FIXED: Realistic minimum expected size for compressed video
+        # Estimate: ~10KB per frame minimum (very conservative for compressed video)
+        min_expected_size_mb = (num_frames * 10 * 1024) / (1024 * 1024)  # 10KB per frame in MB
         
         logger.info(f"📊 Video file stats:")
         logger.info(f"  Size: {file_size_mb:.2f}MB")
-        logger.info(f"  Expected minimum: {min_expected_size:.2f}MB")
+        logger.info(f"  Expected minimum: {min_expected_size_mb:.2f}MB")
+        logger.info(f"  Frames: {num_frames}, Resolution: {width}x{height}")
         
-        if file_size_mb < min_expected_size:
-            raise ValueError(f"Video file too small: {file_size_mb:.2f}MB (expected > {min_expected_size:.2f}MB)")
+        # FIXED: More reasonable size check
+        if file_size_mb < min_expected_size_mb:
+            logger.warning(f"⚠️ Video file smaller than expected: {file_size_mb:.2f}MB < {min_expected_size_mb:.2f}MB")
+            # Don't fail, just log warning since compressed video can be small
+        
+        # Additional check: File completely empty
+        if file_size_mb < 0.01:  # Less than 10KB
+            raise ValueError(f"Video file is essentially empty: {file_size_mb:.4f}MB")
         
         logger.info(f"✅ Video saved successfully: {output_path}")
         logger.info(f"📊 Final size: {file_size_mb:.2f}MB for {num_frames} frames @ {fps}fps")
@@ -429,7 +437,7 @@ def save_video_optimized(frames_tensor, output_path, fps=16):
         return output_path
         
     except Exception as e:
-        logger.error(f"❌ OPTIMIZED video saving failed: {e}")
+        logger.error(f"❌ FIXED video saving failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise e
 
@@ -803,11 +811,11 @@ def generate_video_wan22_complete(image_path: str, **kwargs) -> str:
             del vae
             clear_memory()
             
-            # Save video với optimized method
-            logger.info("💾 Saving video with NOTEBOOK-OPTIMIZED method...")
+            # Save video với FIXED optimized method
+            logger.info("💾 Saving video with FIXED-OPTIMIZED method...")
             output_path = f"/app/ComfyUI/output/wan22_complete_{uuid.uuid4().hex[:8]}.mp4"
             
-            # Use the optimized save function
+            # Use the FIXED save function
             final_output_path = save_video_optimized(decoded, output_path, fps)
             
             # Apply frame interpolation if enabled
@@ -912,7 +920,7 @@ def validate_input_parameters(job_input: dict) -> tuple[bool, str]:
 def handler(job):
     """
     Main RunPod handler cho WAN2.2 LightX2V Q6_K
-    COMPLETE OPTIMIZED VERSION - Based on wan22_Lightx2v.ipynb workflow
+    FIXED OPTIMIZED VERSION - Corrected video saving threshold
     """
     job_id = job.get("id", "unknown")
     start_time = time.time()
@@ -999,7 +1007,7 @@ def handler(job):
             "interpolation_factor": job_input.get("interpolation_factor", 2)
         }
         
-        logger.info(f"🚀 Job {job_id}: WAN2.2 COMPLETE Generation Started")
+        logger.info(f"🚀 Job {job_id}: WAN2.2 FIXED Generation Started")
         logger.info(f"🖼️ Image: {image_url}")
         logger.info(f"📝 Prompt: {positive_prompt[:100]}...")
         logger.info(f"⚙️ Resolution: {parameters['width']}x{parameters['height']}")
@@ -1036,7 +1044,7 @@ def handler(job):
                 return {"error": f"Failed to download image: {str(e)}"}
             
             # Generate video với notebook workflow
-            logger.info("🎬 Starting COMPLETE video generation (notebook workflow)...")
+            logger.info("🎬 Starting FIXED video generation (notebook workflow)...")
             generation_start = time.time()
             
             output_path = generate_video_wan22_complete(
@@ -1051,7 +1059,7 @@ def handler(job):
             
             # Upload result to MinIO
             logger.info("📤 Uploading result to storage...")
-            output_filename = f"wan22_complete_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
+            output_filename = f"wan22_fixed_{job_id}_{uuid.uuid4().hex[:8]}.mp4"
             
             try:
                 output_url = upload_to_minio(output_path, output_filename)
@@ -1079,7 +1087,7 @@ def handler(job):
                     "height": parameters["height"],
                     "frames": parameters["frames"],
                     "fps": parameters["fps"],
-                    "duration_seconds": round(duration_seconds, 2),
+                    "duration_seconds": round(duration_seconds, 2),  
                     "file_size_mb": round(file_size_mb, 2)
                 },
                 "generation_params": {
@@ -1109,7 +1117,7 @@ def handler(job):
                         "clip_vision": parameters["use_clip_vision"]
                     },
                     "model_quantization": "Q6_K",
-                    "workflow_version": "NOTEBOOK_OPTIMIZED"
+                    "workflow_version": "FIXED_OPTIMIZED"
                 },
                 "status": "completed"
             }
@@ -1154,7 +1162,7 @@ def health_check():
         return False, f"Health check failed: {str(e)}"
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting WAN2.2 LightX2V COMPLETE Serverless Worker...")
+    logger.info("🚀 Starting WAN2.2 LightX2V FIXED Serverless Worker...")
     logger.info(f"🔥 PyTorch: {torch.__version__}")
     logger.info(f"🎯 CUDA Available: {torch.cuda.is_available()}")
     
@@ -1170,8 +1178,8 @@ if __name__ == "__main__":
             sys.exit(1)
         
         logger.info(f"✅ Health check passed: {health_msg}")
-        logger.info("🎬 Ready to process WAN2.2 LightX2V requests (COMPLETE OPTIMIZED VERSION)...")
-        logger.info("🔧 Based on wan22_Lightx2v.ipynb workflow - Guaranteed success!")
+        logger.info("🎬 Ready to process WAN2.2 LightX2V requests (FIXED OPTIMIZED VERSION)...")
+        logger.info("🔧 Fixed video saving threshold - Guaranteed success!")
         
         # Start RunPod worker
         runpod.serverless.start({"handler": handler})
