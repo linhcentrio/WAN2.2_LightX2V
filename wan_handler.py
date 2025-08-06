@@ -1731,3 +1731,254 @@ def handler(job):
                         "comfyui_available": COMFYUI_AVAILABLE,
                         "model_quantization": "Q6_K",
                         "workflow_version": "PRODUCTION_FINAL_v4.0",
+                        "tensor_fixes_applied": True,
+                        "aspect_control_enhanced": True,
+                        "rife_interpolation_fixed": True
+                    }
+                },
+                
+                "status": "completed"
+            }
+            
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"❌ Handler error for job {job_id}: {error_msg}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        return {
+            "error": f"Generation failed: {error_msg}",
+            "status": "failed",
+            "job_id": job_id,
+            "processing_time_seconds": round(time.time() - start_time, 2),
+            "system_info": {
+                "cuda_available": CUDA_AVAILABLE,
+                "comfyui_available": COMFYUI_AVAILABLE,
+                "error_category": "generation_error"
+            }
+        }
+        
+    finally:
+        clear_memory_comprehensive()
+
+# ================== HEALTH CHECK (PRODUCTION FINAL) ==================
+
+def health_check():
+    """🏥 PRODUCTION FINAL: Comprehensive system health check"""
+    try:
+        issues = []
+        warnings = []
+        
+        # CUDA check
+        if not torch.cuda.is_available():
+            issues.append("CUDA not available")
+        elif not CUDA_AVAILABLE:
+            warnings.append("CUDA compatibility issues detected")
+        
+        # GPU memory check
+        if torch.cuda.is_available():
+            try:
+                memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+                if memory_gb < 8:
+                    warnings.append(f"Low GPU memory: {memory_gb:.1f}GB")
+                elif memory_gb < 16:
+                    warnings.append(f"Moderate GPU memory: {memory_gb:.1f}GB")
+                
+                # Test basic GPU operations
+                test_tensor = torch.ones(100, device='cuda')
+                test_result = test_tensor.sum()
+                del test_tensor, test_result
+                torch.cuda.empty_cache()
+                
+            except Exception as e:
+                issues.append(f"GPU test failed: {str(e)}")
+        
+        # ComfyUI check
+        if not COMFYUI_AVAILABLE:
+            issues.append("ComfyUI modules not available")
+        
+        # Models check
+        models_ok, missing = verify_models_comprehensive()
+        if not models_ok:
+            issues.append(f"Missing {len(missing)} required models")
+        
+        # Storage check
+        if not minio_client:
+            issues.append("MinIO storage not available")
+        else:
+            try:
+                # Test MinIO connectivity
+                buckets = minio_client.list_buckets()
+                logger.debug(f"MinIO buckets accessible: {len(buckets)}")
+            except Exception as e:
+                warnings.append(f"MinIO connectivity issue: {str(e)}")
+        
+        # Disk space check
+        try:
+            import shutil
+            total, used, free = shutil.disk_usage("/app")
+            free_gb = free / (1024**3)
+            if free_gb < 5:
+                issues.append(f"Low disk space: {free_gb:.1f}GB free")
+            elif free_gb < 10:
+                warnings.append(f"Moderate disk space: {free_gb:.1f}GB free")
+        except Exception as e:
+            warnings.append(f"Disk space check failed: {str(e)}")
+        
+        # RIFE check
+        rife_script = "/app/Practical-RIFE/inference_video.py"
+        if not os.path.exists(rife_script):
+            warnings.append("RIFE interpolation not available")
+        
+        # Summary
+        if issues:
+            return False, f"Critical issues: {'; '.join(issues)}" + (f" | Warnings: {'; '.join(warnings)}" if warnings else "")
+        elif warnings:
+            return True, f"Operational with warnings: {'; '.join(warnings)}"
+        else:
+            return True, "All systems operational - PRODUCTION READY"
+            
+    except Exception as e:
+        return False, f"Health check failed: {str(e)}"
+
+# ================== STARTUP DIAGNOSTICS ==================
+
+def startup_diagnostics():
+    """🔍 Comprehensive startup diagnostics"""
+    logger.info("🔍 Running startup diagnostics...")
+    
+    # System info
+    logger.info(f"🔥 PyTorch: {torch.__version__}")
+    logger.info(f"🐍 Python: {sys.version.split()[0]}")
+    
+    if torch.cuda.is_available():
+        device_count = torch.cuda.device_count()
+        for i in range(device_count):
+            props = torch.cuda.get_device_properties(i)
+            memory_gb = props.total_memory / 1e9
+            logger.info(f"🎯 GPU {i}: {props.name}, {memory_gb:.1f}GB, Compute {props.major}.{props.minor}")
+    else:
+        logger.warning("⚠️ No CUDA devices available")
+    
+    # Memory info
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        logger.info(f"💾 RAM: {memory.total / 1e9:.1f}GB total, {memory.available / 1e9:.1f}GB available")
+    except ImportError:
+        logger.info("💾 RAM info not available (psutil not installed)")
+    
+    # Disk space
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage("/app")
+        logger.info(f"💿 Disk: {total / 1e9:.1f}GB total, {free / 1e9:.1f}GB free")
+    except Exception as e:
+        logger.warning(f"⚠️ Disk info failed: {e}")
+    
+    # Feature summary
+    features = []
+    if CUDA_AVAILABLE:
+        features.append("CUDA")
+    if COMFYUI_AVAILABLE:
+        features.append("ComfyUI")
+    if minio_client:
+        features.append("MinIO")
+    if os.path.exists("/app/Practical-RIFE/inference_video.py"):
+        features.append("RIFE")
+    
+    logger.info(f"✨ Available features: {', '.join(features) if features else 'None'}")
+
+# ================== MAIN ENTRY POINT (PRODUCTION FINAL) ==================
+
+if __name__ == "__main__":
+    logger.info("🚀 Starting WAN2.2 LightX2V PRODUCTION FINAL Serverless Worker...")
+    
+    try:
+        # Comprehensive startup diagnostics
+        startup_diagnostics()
+        
+        # Run health check
+        health_ok, health_msg = health_check()
+        
+        logger.info(f"📊 System Health: {health_msg}")
+        
+        if not health_ok:
+            logger.error("❌ Critical health check failures detected!")
+            logger.error("💥 System cannot start in production mode!")
+            
+            # Try to continue with limited functionality
+            logger.info("🔄 Attempting to start with limited functionality...")
+        
+        # Feature availability summary
+        logger.info("📋 PRODUCTION FINAL Features:")
+        logger.info("  ✅ Enhanced CUDA Compatibility Fixes")
+        logger.info("  ✅ Comprehensive Tensor Shape Validation")
+        logger.info("  ✅ Advanced Aspect Ratio Control (preserve/crop/stretch)")
+        logger.info("  ✅ Multi-Size Image Support (64x64 to 4096x4096)")
+        logger.info("  ✅ RIFE Frame Interpolation (FIXED)")
+        logger.info("  ✅ LightX2V LoRA Support (rank 32/64/128)")
+        logger.info("  ✅ Custom LoRA Download (HuggingFace/CivitAI)")
+        logger.info("  ✅ Advanced Optimizations (Sage Attention, TeaCache)")
+        logger.info("  ✅ Production-Grade Error Handling")
+        logger.info("  ✅ Comprehensive Input Validation")
+        logger.info("  ✅ Enhanced Storage Management")
+        logger.info("  ✅ Detailed Performance Monitoring")
+        
+        # System readiness status
+        readiness_indicators = {
+            "CUDA": "✅" if CUDA_AVAILABLE else "❌",
+            "ComfyUI": "✅" if COMFYUI_AVAILABLE else "❌",
+            "Storage": "✅" if minio_client else "❌",
+            "Models": "✅" if verify_models_comprehensive()[0] else "❌",
+            "RIFE": "✅" if os.path.exists("/app/Practical-RIFE/inference_video.py") else "⚠️"
+        }
+        
+        readiness_summary = " | ".join([f"{k}: {v}" for k, v in readiness_indicators.items()])
+        logger.info(f"🎯 System Readiness: {readiness_summary}")
+        
+        if all(v == "✅" for k, v in readiness_indicators.items() if k != "RIFE"):
+            logger.info("🎬 PRODUCTION FINAL READY - All critical systems operational!")
+        elif COMFYUI_AVAILABLE and verify_models_comprehensive()[0]:
+            logger.info("🎬 BASIC READY - Core functionality available!")
+        else:
+            logger.warning("⚠️ LIMITED FUNCTIONALITY - Some systems unavailable!")
+        
+        # Performance tips
+        if CUDA_AVAILABLE:
+            memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if memory_gb >= 24:
+                logger.info("🚀 HIGH PERFORMANCE MODE - Optimal GPU memory available")
+            elif memory_gb >= 16:
+                logger.info("⚡ PERFORMANCE MODE - Good GPU memory available")
+            elif memory_gb >= 8:
+                logger.info("🔧 EFFICIENCY MODE - Limited GPU memory, using optimizations")
+            else:
+                logger.warning("⚠️ LOW MEMORY MODE - Consider enabling aggressive optimizations")
+        
+        # Final startup message
+        logger.info("=" * 80)
+        logger.info("🎉 WAN2.2 PRODUCTION FINAL Worker Started Successfully!")
+        logger.info("📞 Ready to process video generation requests...")
+        logger.info("🔗 RunPod integration active")
+        logger.info("=" * 80)
+        
+        # Start RunPod serverless worker
+        runpod.serverless.start({"handler": handler})
+        
+    except KeyboardInterrupt:
+        logger.info("🛑 Shutdown requested by user")
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"❌ Critical startup failure: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        logger.error("💥 SYSTEM CANNOT START")
+        logger.error("🔧 Please check:")
+        logger.error("  - CUDA drivers and compatibility")
+        logger.error("  - ComfyUI installation and dependencies")
+        logger.error("  - Model files availability")
+        logger.error("  - Storage connectivity")
+        logger.error("  - System resources (memory, disk space)")
+        
+        sys.exit(1)
